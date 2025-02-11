@@ -2,63 +2,52 @@ package ru.vsu.cs.platon.docs.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import ru.vsu.cs.platon.docs.model.User;
 import ru.vsu.cs.platon.docs.repository.UserRepository;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/users")
 @Tag(name = "Пользователи", description = "Операции для управления пользователями")
+@RequiredArgsConstructor
+@Slf4j
 public class UserController {
+    Logger logger = LoggerFactory.getLogger(UserController.class);
 
-    @Autowired
-    private UserRepository userRepository;
+    private final UserRepository userRepository;
+
+    @GetMapping("/me")
+    @Operation(summary = "Получить информацию о текущем пользователе", description = "Возвращает данные текущего авторизованного пользователя")
+    public ResponseEntity<User> getCurrentUser(@AuthenticationPrincipal UserDetails userDetails) {
+
+        logger.info(userDetails.getUsername());
+        Optional<User> user = userRepository.findByEmail(userDetails.getUsername());
+        return user.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    }
 
     @GetMapping
-    @Operation(summary = "Получить всех пользователей", description = "Возвращает список всех зарегистрированных пользователей")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    @Operation(summary = "Получить всех пользователей", description = "Возвращает список всех зарегистрированных пользователей (только для ADMIN)")
     public List<User> getAllUsers() {
         return userRepository.findAll();
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Получить пользователя по ID", description = "Возвращает пользователя по его идентификатору")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    @Operation(summary = "Получить пользователя по ID", description = "Возвращает пользователя по его идентификатору (только для ADMIN)")
     public ResponseEntity<User> getUserById(@PathVariable Long id) {
         Optional<User> user = userRepository.findById(id);
         return user.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
-    }
-
-    @PostMapping
-    @Operation(summary = "Создать нового пользователя", description = "Создаёт нового пользователя с указанными данными")
-    public User createUser(@RequestBody User user) {
-        return userRepository.save(user);
-    }
-
-    @PutMapping("/{id}")
-    @Operation(summary = "Обновить пользователя", description = "Обновляет данные пользователя по его идентификатору")
-    public ResponseEntity<User> updateUser(@PathVariable Long id, @RequestBody User userDetails) {
-        return userRepository.findById(id)
-                .map(user -> {
-                    user.setEmail(userDetails.getEmail());
-                    user.setUsername(userDetails.getUsername());
-                    user.setPasswordHash(userDetails.getPasswordHash());
-                    User updatedUser = userRepository.save(user);
-                    return ResponseEntity.ok(updatedUser);
-                }).orElseGet(() -> ResponseEntity.notFound().build());
-    }
-
-    @DeleteMapping("/{id}")
-    @Operation(summary = "Удалить пользователя", description = "Удаляет пользователя по его идентификатору")
-    public ResponseEntity<Object> deleteUser(@PathVariable Long id) {
-         return userRepository.findById(id)
-                .map(user -> {
-                    userRepository.delete(user);
-                    return ResponseEntity.noContent().build();
-                }).orElseGet(() -> ResponseEntity.notFound().build());
     }
 }
