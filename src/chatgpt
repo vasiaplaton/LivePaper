@@ -224,6 +224,7 @@ package ru.vsu.cs.platon.docs.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
 
 import java.util.UUID;
 
@@ -233,6 +234,9 @@ public class DocumentDTO {
     private UUID id;
     private String title;
     private String createdAt;
+    private String updatedAt;
+    private String ownerEmail;
+    private DocumentAccessLevel accessLevel;
 }
 
 --------------------------------------------------
@@ -295,6 +299,8 @@ Contents:
 package ru.vsu.cs.platon.docs.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
 import ru.vsu.cs.platon.docs.model.User;
@@ -316,6 +322,11 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
 
     // Find documents accessible by public access level (READ_ONLY or EDITABLE)
     List<Document> findByAccessLevelIn(List<DocumentAccessLevel> accessLevels);
+
+
+    @Query("SELECT dp.document FROM DocumentPermission dp " +
+            "WHERE dp.user = :user")
+    Page<Document> findSharedDocumentsByUser(@Param("user") User user, Pageable pageable);
 }
 
 --------------------------------------------------
@@ -515,7 +526,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -586,7 +596,10 @@ public class DocumentMapper {
         return new DocumentDTO(
                 document.getId(),
                 document.getTitle(),
-                document.getCreatedAt().toString()
+                document.getCreatedAt().toString(),
+                document.getUpdatedAt().toString(),
+                document.getOwner().getEmail(),
+                document.getAccessLevel()
         );
     }
 }
@@ -615,10 +628,9 @@ Path: ./main/java/ru/vsu/cs/platon/docs/mapper/UserMapper.java
 Contents:
 package ru.vsu.cs.platon.docs.mapper;
 
-import ru.vsu.cs.platon.docs.dto.UserDTO;
 import ru.vsu.cs.platon.docs.dto.DocumentDTO;
+import ru.vsu.cs.platon.docs.dto.UserDTO;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.model.Document;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -659,6 +671,7 @@ package ru.vsu.cs.platon.docs.controller;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -668,16 +681,20 @@ import ru.vsu.cs.platon.docs.dto.*;
 import ru.vsu.cs.platon.docs.mapper.DocumentMapper;
 import ru.vsu.cs.platon.docs.mapper.DocumentPermissionMapper;
 import ru.vsu.cs.platon.docs.model.Document;
-import ru.vsu.cs.platon.docs.model.DocumentRole;
+import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
+import ru.vsu.cs.platon.docs.model.DocumentPermission;
 import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.repository.DocumentRepository;
 import ru.vsu.cs.platon.docs.repository.UserRepository;
 import ru.vsu.cs.platon.docs.service.DocumentPermissionService;
 import ru.vsu.cs.platon.docs.service.DocumentService;
-
+import org.springframework.data.domain.Pageable;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import static org.springframework.http.HttpStatus.FORBIDDEN;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @RestController
@@ -688,17 +705,64 @@ public class DocumentController {
     private final DocumentService documentService;
     private final DocumentPermissionService permissionService;
     private final UserRepository userRepository;
+    private final DocumentRepository documentRepository;
+
+
+    protected User findUser(UserDetails userDetails){
+        return userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+    }
+
+    public enum DocumentSortBy{
+        TITLE("title"),
+        CREATED_AT("createdAt"),
+        UPDATED_AT("updatedAt");
+
+        private final String field;
+
+        DocumentSortBy(String field) {
+            this.field = field;
+        }
+
+        public String getField() {
+            return field;
+        }
+    }
 
     // Список документов владельца с пагинацией
     @GetMapping("/me")
     public ResponseEntity<List<DocumentDTO>> listDocuments(@AuthenticationPrincipal UserDetails userDetails,
                                                            @RequestParam(defaultValue = "0") int page,
-                                                           @RequestParam(defaultValue = "10") int size) {
-        User owner = userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+                                                           @RequestParam(defaultValue = "10") int size,
+                                                           @RequestParam(defaultValue = "CREATED_AT") DocumentSortBy sortBy,
+                                                           @RequestParam(defaultValue = "asc") String order) {
+        User owner = findUser(userDetails);
 
-        Page<Document> documents = documentService.getDocumentsByOwner(owner, PageRequest.of(page, size));
+        Sort.Direction direction = order.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy.getField()));
+
+        Page<Document> documents = documentService.getDocumentsByOwner(owner, pageable);
         List<DocumentDTO> documentDTOs = documents.stream()
+                .map(DocumentMapper::toDocumentDTO)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(documentDTOs);
+    }
+
+    @GetMapping("/shared-with-me")
+    public ResponseEntity<List<DocumentDTO>> getSharedDocuments(@AuthenticationPrincipal UserDetails userDetails,
+                                                                @RequestParam(defaultValue = "0") int page,
+                                                                @RequestParam(defaultValue = "10") int size,
+                                                                @RequestParam(defaultValue = "CREATED_AT") DocumentSortBy sortBy,
+                                                                @RequestParam(defaultValue = "asc") String order) {
+        User user = findUser(userDetails);
+
+        Sort.Direction direction = order.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy.getField()));
+
+        Page<Document> sharedDocuments = documentService.getDocumentsSharedWithUser(user, pageable);
+
+        List<DocumentDTO> documentDTOs = sharedDocuments.stream()
                 .map(DocumentMapper::toDocumentDTO)
                 .collect(Collectors.toList());
 
@@ -709,16 +773,14 @@ public class DocumentController {
     @PostMapping
     public ResponseEntity<DocumentDTO> createDocument(@AuthenticationPrincipal UserDetails userDetails,
                                                       @RequestBody CreateDocumentRequestDTO request) {
-        User owner = userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+        User owner = findUser(userDetails);
 
         Document document = documentService.createDocument(owner, request.getTitle());
         return ResponseEntity.ok(DocumentMapper.toDocumentDTO(document));
     }
 
     private Document getDocumentForOwner(UserDetails userDetails, UUID documentId) {
-        User owner = userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+        User owner = findUser(userDetails);
 
         Document document = documentService.findByIdAndOwner(documentId, owner)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Document not found"));
@@ -775,6 +837,29 @@ public class DocumentController {
         permissionService.removePermission(document, email);
 
         return ResponseEntity.ok("Permission removed successfully");
+    }
+
+
+    @GetMapping("/{documentId}")
+    public ResponseEntity<DocumentDTO> getDocumentById(@AuthenticationPrincipal UserDetails userDetails,
+                                                       @PathVariable UUID documentId) {
+        User currentUser = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+
+        Document document = documentService.findById(documentId)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Document not found"));
+
+        if (document.getAccessLevel() != DocumentAccessLevel.PRIVATE){
+            return ResponseEntity.ok(DocumentMapper.toDocumentDTO(document));
+        }
+
+        Optional<DocumentPermission> documentPermission = permissionService.hasPermission(document, currentUser);
+
+        if (documentPermission.isEmpty()) {
+            throw new ResponseStatusException(FORBIDDEN, "You do not have permission to access this document.");
+        }
+
+        return ResponseEntity.ok(DocumentMapper.toDocumentDTO(document));
     }
 }
 
@@ -879,8 +964,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -904,14 +987,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Slf4j
 public class UserController {
-    Logger logger = LoggerFactory.getLogger(UserController.class);
-
     private final UserRepository userRepository;
 
     @GetMapping("/me")
     @Operation(summary = "Получить информацию о текущем пользователе", description = "Возвращает данные текущего авторизованного пользователя")
     public ResponseEntity<UserDTO> getCurrentUser(@AuthenticationPrincipal UserDetails userDetails) {
-        logger.info(userDetails.getUsername());
         Optional<User> userOptional = userRepository.findByEmail(userDetails.getUsername());
 
         return userOptional
@@ -1070,10 +1150,12 @@ Contents:
 package ru.vsu.cs.platon.docs.model;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Entity
 @Table(name = "document_permissions", uniqueConstraints = @UniqueConstraint(columnNames = {"document_id", "user_id"}))
@@ -1230,7 +1312,7 @@ package ru.vsu.cs.platon.docs.model;
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.GenericGenerator;
+import org.hibernate.annotations.UuidGenerator;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -1246,7 +1328,7 @@ public class Document {
 
     @Id
     @GeneratedValue(generator = "UUID")
-    @GenericGenerator(name = "UUID", strategy = "org.hibernate.id.UUIDGenerator")
+    @UuidGenerator()
     @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
 
@@ -1294,12 +1376,15 @@ package ru.vsu.cs.platon.docs.service;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.function.Function;
-
+import io.jsonwebtoken.io.Decoders;
 @Service
 public class JwtService {
 
@@ -1315,11 +1400,12 @@ public class JwtService {
 
     // Создание JWT токена
     private String createToken(String subject, long validity) {
+        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
         return Jwts.builder()
                 .setSubject(subject)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + validity))
-                .signWith(SignatureAlgorithm.HS256, jwtSecret)
+                .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
     }
 
@@ -1355,8 +1441,10 @@ public class JwtService {
 
     // Извлечение всех данных из токена
     private Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .setSigningKey(jwtSecret)
+        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes());
+        return Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
                 .parseClaimsJws(token)
                 .getBody();
     }
@@ -1369,13 +1457,18 @@ package ru.vsu.cs.platon.docs.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import ru.vsu.cs.platon.docs.controller.DocumentController;
 import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
+import ru.vsu.cs.platon.docs.model.DocumentPermission;
 import ru.vsu.cs.platon.docs.model.User;
 import ru.vsu.cs.platon.docs.repository.DocumentRepository;
-
+import ru.vsu.cs.platon.docs.service.file.FileService;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -1384,6 +1477,7 @@ import java.util.UUID;
 public class DocumentService {
 
     private final DocumentRepository documentRepository;
+    private final FileService fileService;
 
     // Получить все документы владельца с пагинацией
     public Page<Document> getDocumentsByOwner(User owner, Pageable pageable) {
@@ -1392,10 +1486,13 @@ public class DocumentService {
 
     // Создать документ
     public Document createDocument(User owner, String title) {
+        byte[] emptyFileContent = "".getBytes();  // Пустой файл для начала
+        String filePath = fileService.saveFile(emptyFileContent);
+
         Document document = Document.builder()
                 .title(title)
                 .owner(owner)
-                .filePath("path/to/encrypted/file.md")
+                .filePath(filePath)
                 .build();
         return documentRepository.save(document);
     }
@@ -1406,12 +1503,21 @@ public class DocumentService {
                 .filter(doc -> doc.getOwner().equals(owner));
     }
 
+    public Optional<Document> findById(UUID documentId) {
+        return documentRepository.findById(documentId);
+    }
+
     // Обновить документ
     public Document updateDocument(Document document, String title, DocumentAccessLevel accessLevel) {
         document.setTitle(title);
         document.setAccessLevel(accessLevel);
         return documentRepository.save(document);
     }
+
+    public Page<Document> getDocumentsSharedWithUser(User user, Pageable pageable) {
+        return documentRepository.findSharedDocumentsByUser(user, pageable);
+    }
+
 }
 
 --------------------------------------------------
@@ -1436,6 +1542,7 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
 
+    @SuppressWarnings("FieldCanBeLocal")
     private final long refreshTokenDurationDays = 7;  // Жизнь токена - 7 дней
 
     // Генерация токена
@@ -1507,6 +1614,11 @@ public class DocumentPermissionService {
     private final DocumentPermissionRepository permissionRepository;
     private final UserRepository userRepository;
 
+
+    public Optional<DocumentPermission> hasPermission(Document document, User user){
+        return permissionRepository.findByDocumentAndUser(document, user);
+    }
+
     // Поделиться документом с другим пользователем
     public DocumentPermission shareDocument(Document document, String userEmail, DocumentRole role) {
         // Поиск пользователя по email
@@ -1516,7 +1628,7 @@ public class DocumentPermissionService {
                 ));
 
         // Проверка существующего разрешения
-        Optional<DocumentPermission> existingPermissionOpt = permissionRepository.findByDocumentAndUser(document, user);
+        Optional<DocumentPermission> existingPermissionOpt = hasPermission(document, user);
 
         if (existingPermissionOpt.isPresent()) {
             // Если разрешение уже существует, обновляем его роль
@@ -1564,6 +1676,89 @@ public class DocumentPermissionService {
 
         permissionRepository.findByDocumentAndUser(document, user)
                 .ifPresent(permissionRepository::delete);
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/service/file/FileService.java
+Contents:
+package ru.vsu.cs.platon.docs.service.file;
+
+public interface FileService {
+
+    String saveFile(byte[] content);
+    byte[] getFile(String path);
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/service/file/LocalFileService.java
+Contents:
+package ru.vsu.cs.platon.docs.service.file;
+
+import org.springframework.context.annotation.Primary;
+import org.springframework.stereotype.Service;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.SecureRandom;
+
+@Service
+@Primary
+public class LocalFileService implements FileService {
+
+    private static final String UPLOAD_DIR = "uploads";
+    private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz";
+    private static final int FOLDER_NAME_LENGTH = 3;
+    private static final int FILE_NAME_LENGTH = 10;
+    private final SecureRandom random = new SecureRandom();
+
+    @Override
+    public String saveFile(byte[] content) {
+        String folderPath = generateRandomFolderPath();
+        File directory = new File(UPLOAD_DIR, folderPath);
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+
+        String fileName = generateRandomString(FILE_NAME_LENGTH);
+        Path filePath = Paths.get(directory.getPath(), fileName);
+
+        try {
+            Files.write(filePath, content);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to save file", e);
+        }
+
+        return Paths.get(folderPath, fileName).toString();
+    }
+
+    @Override
+    public byte[] getFile(String path) {
+        Path filePath = Paths.get(UPLOAD_DIR, path);
+
+        try {
+            return Files.readAllBytes(filePath);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read file", e);
+        }
+    }
+
+    private String generateRandomFolderPath() {
+        return String.join(File.separator,
+                generateRandomString(FOLDER_NAME_LENGTH),
+                generateRandomString(FOLDER_NAME_LENGTH),
+                generateRandomString(FOLDER_NAME_LENGTH));
+    }
+
+    private String generateRandomString(int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(ALPHABET.charAt(random.nextInt(ALPHABET.length())));
+        }
+        return sb.toString();
     }
 }
 

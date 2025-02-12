@@ -9,7 +9,10 @@ public class DocumentMapper {
         return new DocumentDTO(
                 document.getId(),
                 document.getTitle(),
-                document.getCreatedAt().toString()
+                document.getCreatedAt().toString(),
+                document.getUpdatedAt().toString(),
+                document.getOwner().getEmail(),
+                document.getAccessLevel()
         );
     }
 }

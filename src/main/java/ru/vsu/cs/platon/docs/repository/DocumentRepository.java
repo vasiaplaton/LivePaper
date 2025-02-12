@@ -1,6 +1,8 @@
 package ru.vsu.cs.platon.docs.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
 import ru.vsu.cs.platon.docs.model.User;
@@ -22,4 +24,9 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
 
     // Find documents accessible by public access level (READ_ONLY or EDITABLE)
     List<Document> findByAccessLevelIn(List<DocumentAccessLevel> accessLevels);
+
+
+    @Query("SELECT dp.document FROM DocumentPermission dp " +
+            "WHERE dp.user = :user")
+    Page<Document> findSharedDocumentsByUser(@Param("user") User user, Pageable pageable);
 }

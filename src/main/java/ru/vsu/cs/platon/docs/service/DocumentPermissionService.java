@@ -21,6 +21,11 @@ public class DocumentPermissionService {
     private final DocumentPermissionRepository permissionRepository;
     private final UserRepository userRepository;
 
+
+    public Optional<DocumentPermission> hasPermission(Document document, User user){
+        return permissionRepository.findByDocumentAndUser(document, user);
+    }
+
     // Поделиться документом с другим пользователем
     public DocumentPermission shareDocument(Document document, String userEmail, DocumentRole role) {
         // Поиск пользователя по email
@@ -30,7 +35,7 @@ public class DocumentPermissionService {
                 ));
 
         // Проверка существующего разрешения
-        Optional<DocumentPermission> existingPermissionOpt = permissionRepository.findByDocumentAndUser(document, user);
+        Optional<DocumentPermission> existingPermissionOpt = hasPermission(document, user);
 
         if (existingPermissionOpt.isPresent()) {
             // Если разрешение уже существует, обновляем его роль
