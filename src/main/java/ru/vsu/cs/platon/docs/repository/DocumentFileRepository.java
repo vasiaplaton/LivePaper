@@ -10,7 +10,4 @@ public interface DocumentFileRepository extends JpaRepository<DocumentFile, Long
 
     // Find all files attached to a specific document
     List<DocumentFile> findByDocument(Document document);
-
-    // Find encrypted files
-    List<DocumentFile> findByEncryptedTrue();
 }

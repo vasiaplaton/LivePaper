@@ -40,6 +40,7 @@ public class User implements UserDetails {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false)
+    @Getter
     private UserRole role;
 
     // Перед сохранением автоматически задаем время создания и обновления

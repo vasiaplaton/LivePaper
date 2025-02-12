@@ -24,9 +24,6 @@ public class DocumentFile {
     @Column(nullable = false)
     private String filePath; // Path to the file (image, attachment)
 
-    @Column(nullable = false)
-    private boolean encrypted = true; // Whether the file is encrypted
-
     @Column(nullable = false, updatable = false)
     private LocalDateTime uploadedAt;
 

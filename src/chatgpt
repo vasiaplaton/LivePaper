@@ -32,8 +32,8 @@ spring.datasource.driver-class-name=org.postgresql.Driver
 # JPA settings
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
-logging.level.org.springframework.security=DEBUG
-logging.level.org.springframework.security.web.access=DEBUG
+# logging.level.org.springframework.security=DEBUG
+# logging.level.org.springframework.security.web.access=DEBUG
 spring.flyway.enabled=true
 spring.flyway.locations=classpath:db/migration
 
@@ -45,7 +45,60 @@ spring.security.user.name=admin
 spring.security.user.password=your_secure_password
 
 --------------------------------------------------
-Path: ./main/resources/db.migration/V3__create_refresh_tokens_table.sql
+Path: ./main/resources/db/migration/V3__create_documents.sql
+Contents:
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE documents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    title VARCHAR(255) NOT NULL,
+    file_path TEXT NOT NULL, -- Путь к зашифрованному файлу с документом (md)
+    owner_id INT NOT NULL,   -- Владелец документа
+    access_level VARCHAR(50) NULL DEFAULT 'PRIVATE', -- PRIVATE, READ_ONLY, EDITABLE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE document_permissions (
+    id SERIAL PRIMARY KEY,
+    document_id UUID NOT NULL,
+    user_id INT NOT NULL,
+    role VARCHAR(50) NOT NULL, -- READER, EDITOR
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (document_id, user_id)
+);
+
+CREATE TABLE document_files (
+    id SERIAL PRIMARY KEY,
+    document_id UUID NOT NULL,
+    file_path TEXT NOT NULL, -- Путь к файлу (изображение, вложение)
+    encrypted BOOLEAN DEFAULT TRUE, -- Файл зашифрован?
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+--------------------------------------------------
+Path: ./main/resources/db/migration/V1__create_users_table.sql
+Contents:
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    role VARCHAR(50),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+--------------------------------------------------
+Path: ./main/resources/db/migration/V2__create_refresh_tokens_table.sql
 Contents:
 CREATE TABLE refresh_tokens (
     id SERIAL PRIMARY KEY,
@@ -60,35 +113,6 @@ CREATE TABLE refresh_tokens (
     CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
---------------------------------------------------
-Path: ./main/resources/db.migration/V1__create_users_table.sql
-Contents:
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    username VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
---------------------------------------------------
-Path: ./main/resources/db.migration/V2__add_role_column_to_users.sql
-Contents:
--- Шаг 1: Добавляем колонку без NOT NULL
-ALTER TABLE users
-ADD COLUMN role VARCHAR(50);
-
--- Шаг 2: Устанавливаем значение по умолчанию для всех существующих пользователей
-UPDATE users
-SET role = 'ROLE_USER'
-
--- Шаг 3: Делаем колонку NOT NULL и добавляем проверку на допустимые значения
-ALTER TABLE users
-ALTER COLUMN role SET NOT NULL;
-
-ALTER TABLE users
-ADD CONSTRAINT role_check CHECK (role IN ('ROLE_USER', 'ROLE_ADMIN'));
 --------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/DocsApplication.java
 Contents:
@@ -115,6 +139,186 @@ public class DocsApplication {
 }
 
 --------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/ShareDocumentRequestDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto;
+
+import lombok.Data;
+import ru.vsu.cs.platon.docs.model.DocumentRole;
+
+@Data
+public class ShareDocumentRequestDTO {
+    private String email;
+    private DocumentRole role;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/DocumentPermissionDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import ru.vsu.cs.platon.docs.model.DocumentRole;
+
+@Data
+@AllArgsConstructor
+public class DocumentPermissionDTO {
+    private Long id;
+    private Long userId;
+    private String username;
+    private DocumentRole role;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/CreateDocumentRequestDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto;
+
+import lombok.Data;
+
+@Data
+public class CreateDocumentRequestDTO {
+    private String title;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/UserDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import ru.vsu.cs.platon.docs.model.UserRole;
+
+import java.util.List;
+
+@Data
+@AllArgsConstructor
+public class UserDTO {
+    private Long id;
+    private String email;
+    private String username;
+    private UserRole role;
+    private List<DocumentDTO> documents;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/UpdateDocumentRequestDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto;
+
+import lombok.Data;
+import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
+
+@Data
+public class UpdateDocumentRequestDTO {
+    private String title;
+    private DocumentAccessLevel accessLevel;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/DocumentDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+import java.util.UUID;
+
+@Data
+@AllArgsConstructor
+public class DocumentDTO {
+    private UUID id;
+    private String title;
+    private String createdAt;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/auth/RegisterRequestDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto.auth;
+
+import lombok.Data;
+
+@Data
+public class RegisterRequestDTO {
+    private String email;
+    private String password;
+    private String username;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/auth/AuthResponseDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto.auth;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+@Data
+@AllArgsConstructor
+public class AuthResponseDTO {
+    private String accessToken;
+    private String refreshToken;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/auth/LoginRequestDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto.auth;
+
+import lombok.Data;
+
+@Data
+public class LoginRequestDTO {
+    private String email;
+    private String password;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/dto/auth/RefreshRequestDTO.java
+Contents:
+package ru.vsu.cs.platon.docs.dto.auth;
+
+import lombok.Data;
+
+@Data
+public class RefreshRequestDTO {
+    private String refreshToken;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/DocumentRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import ru.vsu.cs.platon.docs.model.Document;
+import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
+import ru.vsu.cs.platon.docs.model.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface DocumentRepository extends JpaRepository<Document, UUID> {
+
+    // Find all documents owned by a specific user
+    List<Document> findByOwner(User owner);
+
+    Page<Document> findByOwner(User owner, Pageable pageable);
+
+    // Find document by title
+    Optional<Document> findByTitle(String title);
+
+    // Find documents accessible by public access level (READ_ONLY or EDITABLE)
+    List<Document> findByAccessLevelIn(List<DocumentAccessLevel> accessLevels);
+}
+
+--------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/repository/RefreshTokenRepository.java
 Contents:
 package ru.vsu.cs.platon.docs.repository;
@@ -127,6 +331,48 @@ import java.util.Optional;
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
     Optional<RefreshToken> findByToken(String token);  // Найти токен по значению
     void deleteByUserId(Long userId);  // Удалить все токены для пользователя
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/DocumentPermissionRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import ru.vsu.cs.platon.docs.model.Document;
+import ru.vsu.cs.platon.docs.model.DocumentPermission;
+import ru.vsu.cs.platon.docs.model.User;
+
+import java.util.List;
+import java.util.Optional;
+
+public interface DocumentPermissionRepository extends JpaRepository<DocumentPermission, Long> {
+
+    // Find permissions for a specific document
+    List<DocumentPermission> findByDocument(Document document);
+
+    // Find permissions for a specific user
+    List<DocumentPermission> findByUser(User user);
+
+    // Find a specific permission by document and user
+    Optional<DocumentPermission> findByDocumentAndUser(Document document, User user);
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/DocumentFileRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import ru.vsu.cs.platon.docs.model.Document;
+import ru.vsu.cs.platon.docs.model.DocumentFile;
+
+import java.util.List;
+
+public interface DocumentFileRepository extends JpaRepository<DocumentFile, Long> {
+
+    // Find all files attached to a specific document
+    List<DocumentFile> findByDocument(Document document);
 }
 
 --------------------------------------------------
@@ -229,6 +475,35 @@ public class OpenApiConfig {
 }
 
 --------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/config/GlobalExceptionHandler.java
+Contents:
+package ru.vsu.cs.platon.docs.config;
+
+import io.swagger.v3.oas.annotations.Hidden;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@ControllerAdvice
+@Hidden
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> handleResponseStatusException(ResponseStatusException ex) {
+        Map<String, String> errorResponse = new HashMap<>();
+        errorResponse.put("details", ex.getReason());
+        return new ResponseEntity<>(errorResponse, ex.getStatusCode());
+    }
+
+    // Другие обработчики ошибок можно добавить здесь
+}
+
+--------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/config/JwtAuthenticationFilter.java
 Contents:
 package ru.vsu.cs.platon.docs.config;
@@ -298,6 +573,212 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 }
 
 --------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/mapper/DocumentMapper.java
+Contents:
+package ru.vsu.cs.platon.docs.mapper;
+
+import ru.vsu.cs.platon.docs.dto.DocumentDTO;
+import ru.vsu.cs.platon.docs.model.Document;
+
+public class DocumentMapper {
+
+    public static DocumentDTO toDocumentDTO(Document document) {
+        return new DocumentDTO(
+                document.getId(),
+                document.getTitle(),
+                document.getCreatedAt().toString()
+        );
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/mapper/DocumentPermissionMapper.java
+Contents:
+package ru.vsu.cs.platon.docs.mapper;
+
+import ru.vsu.cs.platon.docs.dto.DocumentPermissionDTO;
+import ru.vsu.cs.platon.docs.model.DocumentPermission;
+
+public class DocumentPermissionMapper {
+    public static DocumentPermissionDTO toDTO(DocumentPermission permission) {
+        return new DocumentPermissionDTO(
+                permission.getId(),
+                permission.getUser().getId(),
+                permission.getUser().getUsername(),
+                permission.getRole()
+        );
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/mapper/UserMapper.java
+Contents:
+package ru.vsu.cs.platon.docs.mapper;
+
+import ru.vsu.cs.platon.docs.dto.UserDTO;
+import ru.vsu.cs.platon.docs.dto.DocumentDTO;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.model.Document;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+public class UserMapper {
+
+    public static UserDTO toUserDTO(User user) {
+        return new UserDTO(
+                user.getId(),
+                user.getEmail(),
+                user.getUsername(),
+                user.getRole(),
+                null // Documents are not included by default
+        );
+    }
+
+    public static UserDTO toUserDTOWithDocuments(User user) {
+        List<DocumentDTO> documents = user.getDocuments()
+                .stream()
+                .limit(10)
+                .map(DocumentMapper::toDocumentDTO)
+                .collect(Collectors.toList());
+
+        return new UserDTO(
+                user.getId(),
+                user.getEmail(),
+                user.getUsername(),
+                user.getRole(),
+                documents
+        );
+    }
+}
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/controller/DocumentController.java
+Contents:
+package ru.vsu.cs.platon.docs.controller;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+import ru.vsu.cs.platon.docs.dto.*;
+import ru.vsu.cs.platon.docs.mapper.DocumentMapper;
+import ru.vsu.cs.platon.docs.mapper.DocumentPermissionMapper;
+import ru.vsu.cs.platon.docs.model.Document;
+import ru.vsu.cs.platon.docs.model.DocumentRole;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.service.DocumentPermissionService;
+import ru.vsu.cs.platon.docs.service.DocumentService;
+
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+
+@RestController
+@RequestMapping("/api/documents")
+@RequiredArgsConstructor
+public class DocumentController {
+
+    private final DocumentService documentService;
+    private final DocumentPermissionService permissionService;
+    private final UserRepository userRepository;
+
+    // Список документов владельца с пагинацией
+    @GetMapping("/me")
+    public ResponseEntity<List<DocumentDTO>> listDocuments(@AuthenticationPrincipal UserDetails userDetails,
+                                                           @RequestParam(defaultValue = "0") int page,
+                                                           @RequestParam(defaultValue = "10") int size) {
+        User owner = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+
+        Page<Document> documents = documentService.getDocumentsByOwner(owner, PageRequest.of(page, size));
+        List<DocumentDTO> documentDTOs = documents.stream()
+                .map(DocumentMapper::toDocumentDTO)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(documentDTOs);
+    }
+
+    // Создать документ
+    @PostMapping
+    public ResponseEntity<DocumentDTO> createDocument(@AuthenticationPrincipal UserDetails userDetails,
+                                                      @RequestBody CreateDocumentRequestDTO request) {
+        User owner = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+
+        Document document = documentService.createDocument(owner, request.getTitle());
+        return ResponseEntity.ok(DocumentMapper.toDocumentDTO(document));
+    }
+
+    private Document getDocumentForOwner(UserDetails userDetails, UUID documentId) {
+        User owner = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
+
+        Document document = documentService.findByIdAndOwner(documentId, owner)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Document not found"));
+
+        if (!document.getOwner().getId().equals(owner.getId())) {
+            throw new SecurityException("You do not have permission to perform this action.");
+        }
+
+        return document;
+    }
+
+    @PostMapping("/{documentId}/share")
+    public ResponseEntity<?> shareDocument(@AuthenticationPrincipal UserDetails userDetails,
+                                           @PathVariable UUID documentId,
+                                           @RequestBody ShareDocumentRequestDTO request) {
+
+        Document document = getDocumentForOwner(userDetails, documentId);
+        permissionService.shareDocument(document, request.getEmail(), request.getRole());
+
+        return ResponseEntity.ok("Document shared successfully");
+    }
+
+    @GetMapping("/{documentId}/permissions")
+    public ResponseEntity<List<DocumentPermissionDTO>> viewPermissions(@AuthenticationPrincipal UserDetails userDetails,
+                                                                       @PathVariable UUID documentId) {
+
+        Document document = getDocumentForOwner(userDetails, documentId);
+
+        List<DocumentPermissionDTO> permissions = permissionService.getPermissionsForDocument(document)
+                .stream()
+                .map(DocumentPermissionMapper::toDTO)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(permissions);
+    }
+
+    @PutMapping("/{documentId}")
+    public ResponseEntity<DocumentDTO> updateDocument(@AuthenticationPrincipal UserDetails userDetails,
+                                                      @PathVariable UUID documentId,
+                                                      @RequestBody UpdateDocumentRequestDTO request) {
+
+        Document document = getDocumentForOwner(userDetails, documentId);
+        Document updatedDocument = documentService.updateDocument(document, request.getTitle(), request.getAccessLevel());
+
+        return ResponseEntity.ok(DocumentMapper.toDocumentDTO(updatedDocument));
+    }
+
+    @DeleteMapping("/{documentId}/permissions/{email}")
+    public ResponseEntity<?> removePermission(@AuthenticationPrincipal UserDetails userDetails,
+                                              @PathVariable UUID documentId,
+                                              @PathVariable String email) {
+
+        Document document = getDocumentForOwner(userDetails, documentId);
+        permissionService.removePermission(document, email);
+
+        return ResponseEntity.ok("Permission removed successfully");
+    }
+}
+
+--------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/controller/AuthController.java
 Contents:
 package ru.vsu.cs.platon.docs.controller;
@@ -308,6 +789,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+import ru.vsu.cs.platon.docs.dto.auth.RegisterRequestDTO;
+import ru.vsu.cs.platon.docs.dto.auth.LoginRequestDTO;
+import ru.vsu.cs.platon.docs.dto.auth.RefreshRequestDTO;
+import ru.vsu.cs.platon.docs.dto.auth.AuthResponseDTO;
 import ru.vsu.cs.platon.docs.model.User;
 import ru.vsu.cs.platon.docs.model.RefreshToken;
 import ru.vsu.cs.platon.docs.model.UserRole;
@@ -328,43 +813,17 @@ public class AuthController {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
 
-    // === DTO КЛАССЫ ===
-    public static class RegisterRequest {
-        public String email;
-        public String password;
-        public String username;
-    }
-
-    public static class LoginRequest {
-        public String email;
-        public String password;
-    }
-
-    public static class RefreshRequest {
-        public String refreshToken;
-    }
-
-    public static class AuthResponse {
-        public String accessToken;
-        public String refreshToken;
-
-        public AuthResponse(String accessToken, String refreshToken) {
-            this.accessToken = accessToken;
-            this.refreshToken = refreshToken;
-        }
-    }
-
     // === РЕГИСТРАЦИЯ ===
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
-        if (userRepository.findByEmail(request.email).isPresent()) {
+    public ResponseEntity<?> register(@RequestBody RegisterRequestDTO request) {
+        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
             return ResponseEntity.badRequest().body("User with this email already exists");
         }
 
         User newUser = User.builder()
-                .email(request.email)
-                .username(request.username)
-                .passwordHash(passwordEncoder.encode(request.password))
+                .email(request.getEmail())
+                .username(request.getUsername())
+                .passwordHash(passwordEncoder.encode(request.getPassword()))
                 .role(UserRole.ROLE_USER)
                 .build();
 
@@ -374,9 +833,9 @@ public class AuthController {
 
     // === ЛОГИН ===
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
-        Optional<User> userOpt = userRepository.findByEmail(request.email);
-        if (userOpt.isEmpty() || !passwordEncoder.matches(request.password, userOpt.get().getPasswordHash())) {
+    public ResponseEntity<AuthResponseDTO> login(@RequestBody LoginRequestDTO request, HttpServletRequest httpRequest) {
+        Optional<User> userOpt = userRepository.findByEmail(request.getEmail());
+        if (userOpt.isEmpty() || !passwordEncoder.matches(request.getPassword(), userOpt.get().getPasswordHash())) {
             return ResponseEntity.status(401).build();
         }
 
@@ -384,14 +843,13 @@ public class AuthController {
         String accessToken = jwtService.generateAccessToken(user.getEmail());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(user, httpRequest);
 
-        return ResponseEntity.ok(new AuthResponse(accessToken, refreshToken.getToken()));
+        return ResponseEntity.ok(new AuthResponseDTO(accessToken, refreshToken.getToken()));
     }
 
     // === ОБНОВЛЕНИЕ ТОКЕНА ===
     @PostMapping("/refresh")
-    public ResponseEntity<AuthResponse> refresh(@RequestBody RefreshRequest request, HttpServletRequest httpRequest) {
-
-        Optional<RefreshToken> refreshTokenOpt = refreshTokenService.findByToken(request.refreshToken);
+    public ResponseEntity<AuthResponseDTO> refresh(@RequestBody RefreshRequestDTO request, HttpServletRequest httpRequest) {
+        Optional<RefreshToken> refreshTokenOpt = refreshTokenService.findByToken(request.getRefreshToken());
 
         if (refreshTokenOpt.isEmpty()) {
             return ResponseEntity.status(401).build();
@@ -408,7 +866,7 @@ public class AuthController {
         RefreshToken newRefreshToken = refreshTokenService.createRefreshToken(refreshToken.getUser(), httpRequest);
         String newAccessToken = jwtService.generateAccessToken(refreshToken.getUser().getEmail());
 
-        return ResponseEntity.ok(new AuthResponse(newAccessToken, newRefreshToken.getToken()));
+        return ResponseEntity.ok(new AuthResponseDTO(newAccessToken, newRefreshToken.getToken()));
     }
 }
 
@@ -427,12 +885,18 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import ru.vsu.cs.platon.docs.dto.UserDTO;
+import ru.vsu.cs.platon.docs.mapper.UserMapper;
 import ru.vsu.cs.platon.docs.model.User;
 import ru.vsu.cs.platon.docs.repository.UserRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/users")
@@ -446,26 +910,32 @@ public class UserController {
 
     @GetMapping("/me")
     @Operation(summary = "Получить информацию о текущем пользователе", description = "Возвращает данные текущего авторизованного пользователя")
-    public ResponseEntity<User> getCurrentUser(@AuthenticationPrincipal UserDetails userDetails) {
-
+    public ResponseEntity<UserDTO> getCurrentUser(@AuthenticationPrincipal UserDetails userDetails) {
         logger.info(userDetails.getUsername());
-        Optional<User> user = userRepository.findByEmail(userDetails.getUsername());
-        return user.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+        Optional<User> userOptional = userRepository.findByEmail(userDetails.getUsername());
+
+        return userOptional
+                .map(user -> ResponseEntity.ok(UserMapper.toUserDTOWithDocuments(user)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @GetMapping
     @PreAuthorize("hasRole('ROLE_ADMIN')")
     @Operation(summary = "Получить всех пользователей", description = "Возвращает список всех зарегистрированных пользователей (только для ADMIN)")
-    public List<User> getAllUsers() {
-        return userRepository.findAll();
+    public List<UserDTO> getAllUsers() {
+        return userRepository.findAll()
+                .stream()
+                .map(UserMapper::toUserDTO)
+                .collect(Collectors.toList());
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('ROLE_ADMIN')")
     @Operation(summary = "Получить пользователя по ID", description = "Возвращает пользователя по его идентификатору (только для ADMIN)")
-    public ResponseEntity<User> getUserById(@PathVariable Long id) {
-        Optional<User> user = userRepository.findById(id);
-        return user.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    public ResponseEntity<UserDTO> getUserById(@PathVariable Long id) {
+        return userRepository.findById(id)
+                .map(user -> ResponseEntity.ok(UserMapper.toUserDTO(user)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }
 
@@ -474,6 +944,7 @@ Path: ./main/java/ru/vsu/cs/platon/docs/model/RefreshToken.java
 Contents:
 package ru.vsu.cs.platon.docs.model;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDateTime;
@@ -492,6 +963,7 @@ public class RefreshToken {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
+    @JsonBackReference
     private User user;
 
     @Column(nullable = false, unique = true, length = 512)
@@ -534,10 +1006,123 @@ public enum UserRole {
     ROLE_ADMIN
 }
 --------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/DocumentRole.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+public enum DocumentRole {
+    READER,   // Can only read
+    EDITOR    // Can edit
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/DocumentAccessLevel.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+public enum DocumentAccessLevel {
+    PRIVATE,
+    READ_ONLY,
+    EDITABLE
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/DocumentFile.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "document_files")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class DocumentFile {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "document_id", nullable = false)
+    private Document document;
+
+    @Column(nullable = false)
+    private String filePath; // Path to the file (image, attachment)
+
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime uploadedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        uploadedAt = LocalDateTime.now();
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/DocumentPermission.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = "document_permissions", uniqueConstraints = @UniqueConstraint(columnNames = {"document_id", "user_id"}))
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class DocumentPermission {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "document_id", nullable = false)
+    private Document document;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private DocumentRole role;
+
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+}
+
+--------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/model/User.java
 Contents:
 package ru.vsu.cs.platon.docs.model;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.security.core.GrantedAuthority;
@@ -546,6 +1131,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 
 @Entity
 @Table(name = "users")
@@ -576,6 +1162,7 @@ public class User implements UserDetails {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false)
+    @Getter
     private UserRole role;
 
     // Перед сохранением автоматически задаем время создания и обновления
@@ -589,6 +1176,14 @@ public class User implements UserDetails {
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
+
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonManagedReference
+    private List<RefreshToken> refreshTokens;
+
+    @OneToMany(mappedBy = "owner", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonManagedReference
+    private List<Document> documents;
 
     // Реализация методов UserDetails для Spring Security
     @Override
@@ -627,6 +1222,70 @@ public class User implements UserDetails {
     }
 }
 
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/Document.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+import com.fasterxml.jackson.annotation.JsonBackReference;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.GenericGenerator;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+@Entity
+@Table(name = "documents")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class Document {
+
+    @Id
+    @GeneratedValue(generator = "UUID")
+    @GenericGenerator(name = "UUID", strategy = "org.hibernate.id.UUIDGenerator")
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id;
+
+    @Column(nullable = false)
+    private String title;
+
+    @Column(nullable = false)
+    private String filePath;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id", nullable = false)
+    @JsonBackReference
+    private User owner;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private DocumentAccessLevel accessLevel = DocumentAccessLevel.PRIVATE;
+
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
+
+    @OneToMany(mappedBy = "document", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<DocumentPermission> permissions;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+}
 --------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/service/JwtService.java
 Contents:
@@ -704,6 +1363,58 @@ public class JwtService {
 }
 
 --------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/service/DocumentService.java
+Contents:
+package ru.vsu.cs.platon.docs.service;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import ru.vsu.cs.platon.docs.model.Document;
+import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.repository.DocumentRepository;
+
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class DocumentService {
+
+    private final DocumentRepository documentRepository;
+
+    // Получить все документы владельца с пагинацией
+    public Page<Document> getDocumentsByOwner(User owner, Pageable pageable) {
+        return documentRepository.findByOwner(owner, pageable);
+    }
+
+    // Создать документ
+    public Document createDocument(User owner, String title) {
+        Document document = Document.builder()
+                .title(title)
+                .owner(owner)
+                .filePath("path/to/encrypted/file.md")
+                .build();
+        return documentRepository.save(document);
+    }
+
+    // Найти документ по ID и владельцу
+    public Optional<Document> findByIdAndOwner(UUID documentId, User owner) {
+        return documentRepository.findById(documentId)
+                .filter(doc -> doc.getOwner().equals(owner));
+    }
+
+    // Обновить документ
+    public Document updateDocument(Document document, String title, DocumentAccessLevel accessLevel) {
+        document.setTitle(title);
+        document.setAccessLevel(accessLevel);
+        return documentRepository.save(document);
+    }
+}
+
+--------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/service/RefreshTokenService.java
 Contents:
 package ru.vsu.cs.platon.docs.service;
@@ -767,6 +1478,92 @@ public class RefreshTokenService {
     public RefreshToken refreshToken(RefreshToken oldToken, HttpServletRequest request) {
         deleteToken(oldToken);
         return createRefreshToken(oldToken.getUser(), request);
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/service/DocumentPermissionService.java
+Contents:
+package ru.vsu.cs.platon.docs.service;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+import ru.vsu.cs.platon.docs.model.Document;
+import ru.vsu.cs.platon.docs.model.DocumentPermission;
+import ru.vsu.cs.platon.docs.model.DocumentRole;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.repository.DocumentPermissionRepository;
+import ru.vsu.cs.platon.docs.repository.UserRepository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Service
+@RequiredArgsConstructor
+public class DocumentPermissionService {
+
+    private final DocumentPermissionRepository permissionRepository;
+    private final UserRepository userRepository;
+
+    // Поделиться документом с другим пользователем
+    public DocumentPermission shareDocument(Document document, String userEmail, DocumentRole role) {
+        // Поиск пользователя по email
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "User not found"
+                ));
+
+        // Проверка существующего разрешения
+        Optional<DocumentPermission> existingPermissionOpt = permissionRepository.findByDocumentAndUser(document, user);
+
+        if (existingPermissionOpt.isPresent()) {
+            // Если разрешение уже существует, обновляем его роль
+            DocumentPermission existingPermission = existingPermissionOpt.get();
+            existingPermission.setRole(role);
+            return permissionRepository.save(existingPermission);
+        } else {
+            // Если разрешения нет, создаем новое
+            DocumentPermission newPermission = DocumentPermission.builder()
+                    .document(document)
+                    .user(user)
+                    .role(role)
+                    .build();
+            return permissionRepository.save(newPermission);
+        }
+    }
+
+    // Получить разрешения для документа
+    public List<DocumentPermission> getPermissionsForDocument(Document document) {
+        return permissionRepository.findByDocument(document);
+    }
+
+    // Изменить разрешение для пользователя
+    public Optional<DocumentPermission> updatePermission(Document document, String userEmail, DocumentRole newRole) {
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "User not found"
+                ));
+
+        Optional<DocumentPermission> permissionOpt = permissionRepository.findByDocumentAndUser(document, user);
+        if (permissionOpt.isPresent()) {
+            DocumentPermission permission = permissionOpt.get();
+            permission.setRole(newRole);
+            permissionRepository.save(permission);
+        }
+        return permissionOpt;
+    }
+
+    // Удалить разрешение
+    public void removePermission(Document document, String userEmail) {
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "User not found"
+                ));
+
+        permissionRepository.findByDocumentAndUser(document, user)
+                .ifPresent(permissionRepository::delete);
     }
 }
 
