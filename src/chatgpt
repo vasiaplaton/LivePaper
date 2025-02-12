@@ -1,0 +1,773 @@
+Path: ./chatgpt
+Contents:
+Path: ./chatgpt
+Contents:
+
+--------------------------------------------------
+Path: ./test/java/ru/vsu/cs/platon/docs/DocsApplicationTests.java
+Contents:
+package ru.vsu.cs.platon.docs;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class DocsApplicationTests {
+
+	@Test
+	void contextLoads() {
+	}
+
+}
+
+--------------------------------------------------
+Path: ./main/resources/application.properties
+Contents:
+spring.application.name=Docs
+spring.datasource.url=${DATABASE_URL:jdbc:postgresql://localhost:5478/db}
+spring.datasource.username=${POSTGRES_USER:admin}
+spring.datasource.password=${POSTGRES_PASSWORD:1q2w3e4r}
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# JPA settings
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+logging.level.org.springframework.security=DEBUG
+logging.level.org.springframework.security.web.access=DEBUG
+spring.flyway.enabled=true
+spring.flyway.locations=classpath:db/migration
+
+springdoc.api-docs.path=/openapi.json
+springdoc.swagger-ui.path=/docs
+
+jwt.secret=superSecretJwtKey1234567890superSecretJwtKey1234567890superSecretJwtKey1234567890
+spring.security.user.name=admin
+spring.security.user.password=your_secure_password
+
+--------------------------------------------------
+Path: ./main/resources/db.migration/V3__create_refresh_tokens_table.sql
+Contents:
+CREATE TABLE refresh_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    token VARCHAR(512) NOT NULL UNIQUE,
+    expiry_date TIMESTAMP NOT NULL,
+    ip_address VARCHAR(45),  -- IPv4 и IPv6 адреса
+    user_agent TEXT,         -- Информация о браузере/устройстве
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+--------------------------------------------------
+Path: ./main/resources/db.migration/V1__create_users_table.sql
+Contents:
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+--------------------------------------------------
+Path: ./main/resources/db.migration/V2__add_role_column_to_users.sql
+Contents:
+-- Шаг 1: Добавляем колонку без NOT NULL
+ALTER TABLE users
+ADD COLUMN role VARCHAR(50);
+
+-- Шаг 2: Устанавливаем значение по умолчанию для всех существующих пользователей
+UPDATE users
+SET role = 'ROLE_USER'
+
+-- Шаг 3: Делаем колонку NOT NULL и добавляем проверку на допустимые значения
+ALTER TABLE users
+ALTER COLUMN role SET NOT NULL;
+
+ALTER TABLE users
+ADD CONSTRAINT role_check CHECK (role IN ('ROLE_USER', 'ROLE_ADMIN'));
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/DocsApplication.java
+Contents:
+package ru.vsu.cs.platon.docs;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+@RestController
+public class DocsApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(DocsApplication.class, args);
+	}
+
+	@GetMapping("/hello")
+	public String hello(@RequestParam(value = "name", defaultValue = "World") String name) {
+		return String.format("Hello %s!", name);
+	}
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/RefreshTokenRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import ru.vsu.cs.platon.docs.model.RefreshToken;
+
+import java.util.Optional;
+
+public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
+    Optional<RefreshToken> findByToken(String token);  // Найти токен по значению
+    void deleteByUserId(Long userId);  // Удалить все токены для пользователя
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/UserRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import ru.vsu.cs.platon.docs.model.User;
+
+import java.util.Optional;
+
+public interface UserRepository extends JpaRepository<User, Long> {
+    Optional<User> findByEmail(String email);
+    Optional<User> findByUsername(String username);
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/config/SecurityConfig.java
+Contents:
+package ru.vsu.cs.platon.docs.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+public class SecurityConfig {
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        String[] patterns = new String[]{"/auth/**", "/swagger-ui/**", "/v3/api-docs/**", "/docs/**", "/openapi.json/**"};
+        http
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(AbstractHttpConfigurer::disable)
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(patterns).permitAll()  // Разрешаем публичные эндпоинты
+                        .anyRequest().authenticated()                // Всё остальное требует авторизации
+                )
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);  // JWT фильтр перед UsernamePassword
+
+        // Добавляем JWT фильтр
+// Отключаем сессии для JWT
+        return http.build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/config/OpenApiConfig.java
+Contents:
+package ru.vsu.cs.platon.docs.config;
+
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
+import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class OpenApiConfig {
+
+    @Bean
+    public OpenAPI customOpenAPI() {
+        final String securitySchemeName = "bearerAuth";
+
+        return new OpenAPI()
+                .info(new Info()
+                        .title("User Management API")
+                        .description("API for managing users with JWT authorization")
+                        .version("1.0"))
+                .addSecurityItem(new SecurityRequirement().addList(securitySchemeName))  // Добавляем замочек ко всем эндпоинтам
+                .components(new io.swagger.v3.oas.models.Components()
+                        .addSecuritySchemes(securitySchemeName, new SecurityScheme()
+                                .name(securitySchemeName)
+                                .type(SecurityScheme.Type.HTTP)
+                                .scheme("bearer")
+                                .bearerFormat("JWT")  // Указываем, что это JWT токен
+                        ));
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/config/JwtAuthenticationFilter.java
+Contents:
+package ru.vsu.cs.platon.docs.config;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.service.JwtService;
+
+import java.io.IOException;
+import java.util.Optional;
+
+@Component
+@RequiredArgsConstructor
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private final JwtService jwtService;
+    private final UserRepository userRepository;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+        String requestPath = request.getRequestURI();
+        // Пропускаем фильтрацию для публичных эндпоинтов
+        if (requestPath.startsWith("/auth/") ||
+                requestPath.startsWith("/swagger-ui/") ||
+                requestPath.startsWith("/v3/api-docs/") ||
+                requestPath.startsWith("/docs/") ||
+                requestPath.startsWith("/openapi.json")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        String jwt = authHeader.substring(7);
+        String userEmail = jwtService.extractEmail(jwt);
+
+        if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            Optional<User> userDetails = userRepository.findByEmail(userEmail);
+            if (userDetails.isPresent() && jwtService.isTokenValid(jwt)) {
+                UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
+                        userDetails.get(), null, userDetails.get().getAuthorities());
+                authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+                SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+            }
+        }
+
+        filterChain.doFilter(request, response);
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/controller/AuthController.java
+Contents:
+package ru.vsu.cs.platon.docs.controller;
+
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.*;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.model.RefreshToken;
+import ru.vsu.cs.platon.docs.model.UserRole;
+import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.service.JwtService;
+import ru.vsu.cs.platon.docs.service.RefreshTokenService;
+
+import java.util.Optional;
+
+@RestController
+@RequestMapping("/auth")
+@RequiredArgsConstructor
+@Slf4j
+public class AuthController {
+
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
+
+    // === DTO КЛАССЫ ===
+    public static class RegisterRequest {
+        public String email;
+        public String password;
+        public String username;
+    }
+
+    public static class LoginRequest {
+        public String email;
+        public String password;
+    }
+
+    public static class RefreshRequest {
+        public String refreshToken;
+    }
+
+    public static class AuthResponse {
+        public String accessToken;
+        public String refreshToken;
+
+        public AuthResponse(String accessToken, String refreshToken) {
+            this.accessToken = accessToken;
+            this.refreshToken = refreshToken;
+        }
+    }
+
+    // === РЕГИСТРАЦИЯ ===
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
+        if (userRepository.findByEmail(request.email).isPresent()) {
+            return ResponseEntity.badRequest().body("User with this email already exists");
+        }
+
+        User newUser = User.builder()
+                .email(request.email)
+                .username(request.username)
+                .passwordHash(passwordEncoder.encode(request.password))
+                .role(UserRole.ROLE_USER)
+                .build();
+
+        userRepository.save(newUser);
+        return ResponseEntity.ok("User registered successfully");
+    }
+
+    // === ЛОГИН ===
+    @PostMapping("/login")
+    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        Optional<User> userOpt = userRepository.findByEmail(request.email);
+        if (userOpt.isEmpty() || !passwordEncoder.matches(request.password, userOpt.get().getPasswordHash())) {
+            return ResponseEntity.status(401).build();
+        }
+
+        User user = userOpt.get();
+        String accessToken = jwtService.generateAccessToken(user.getEmail());
+        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user, httpRequest);
+
+        return ResponseEntity.ok(new AuthResponse(accessToken, refreshToken.getToken()));
+    }
+
+    // === ОБНОВЛЕНИЕ ТОКЕНА ===
+    @PostMapping("/refresh")
+    public ResponseEntity<AuthResponse> refresh(@RequestBody RefreshRequest request, HttpServletRequest httpRequest) {
+
+        Optional<RefreshToken> refreshTokenOpt = refreshTokenService.findByToken(request.refreshToken);
+
+        if (refreshTokenOpt.isEmpty()) {
+            return ResponseEntity.status(401).build();
+        }
+
+        RefreshToken refreshToken = refreshTokenOpt.get();
+
+        if (refreshTokenService.isTokenExpired(refreshToken)) {
+            refreshTokenService.deleteToken(refreshToken);
+            return ResponseEntity.status(401).build();
+        }
+
+        refreshTokenService.deleteToken(refreshToken);
+        RefreshToken newRefreshToken = refreshTokenService.createRefreshToken(refreshToken.getUser(), httpRequest);
+        String newAccessToken = jwtService.generateAccessToken(refreshToken.getUser().getEmail());
+
+        return ResponseEntity.ok(new AuthResponse(newAccessToken, newRefreshToken.getToken()));
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/controller/UserController.java
+Contents:
+package ru.vsu.cs.platon.docs.controller;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.*;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.repository.UserRepository;
+
+import java.util.List;
+import java.util.Optional;
+
+@RestController
+@RequestMapping("/api/users")
+@Tag(name = "Пользователи", description = "Операции для управления пользователями")
+@RequiredArgsConstructor
+@Slf4j
+public class UserController {
+    Logger logger = LoggerFactory.getLogger(UserController.class);
+
+    private final UserRepository userRepository;
+
+    @GetMapping("/me")
+    @Operation(summary = "Получить информацию о текущем пользователе", description = "Возвращает данные текущего авторизованного пользователя")
+    public ResponseEntity<User> getCurrentUser(@AuthenticationPrincipal UserDetails userDetails) {
+
+        logger.info(userDetails.getUsername());
+        Optional<User> user = userRepository.findByEmail(userDetails.getUsername());
+        return user.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @GetMapping
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    @Operation(summary = "Получить всех пользователей", description = "Возвращает список всех зарегистрированных пользователей (только для ADMIN)")
+    public List<User> getAllUsers() {
+        return userRepository.findAll();
+    }
+
+    @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    @Operation(summary = "Получить пользователя по ID", description = "Возвращает пользователя по его идентификатору (только для ADMIN)")
+    public ResponseEntity<User> getUserById(@PathVariable Long id) {
+        Optional<User> user = userRepository.findById(id);
+        return user.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/RefreshToken.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "refresh_tokens")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class RefreshToken {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @Column(nullable = false, unique = true, length = 512)
+    private String token;
+
+    @Column(name = "expiry_date", nullable = false)
+    private LocalDateTime expiryDate;
+
+    @Column(name = "ip_address", length = 45)
+    private String ipAddress;  // Хранение IP-адреса
+
+    @Column(name = "user_agent", columnDefinition = "TEXT")
+    private String userAgent;  // Хранение информации об устройстве
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/UserRole.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+public enum UserRole {
+    ROLE_USER,
+    ROLE_ADMIN
+}
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/User.java
+Contents:
+package ru.vsu.cs.platon.docs.model;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.Collections;
+
+@Entity
+@Table(name = "users")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class User implements UserDetails {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
+    @Column(nullable = false)
+    private String username;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false)
+    private UserRole role;
+
+    // Перед сохранением автоматически задаем время создания и обновления
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+
+    // Реализация методов UserDetails для Spring Security
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return Collections.singleton(() -> role.name());
+    }
+
+    @Override
+    public String getPassword() {
+        return passwordHash;
+    }
+
+    @Override
+    public String getUsername() {
+        return email;
+    }
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/service/JwtService.java
+Contents:
+package ru.vsu.cs.platon.docs.service;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.util.Date;
+import java.util.function.Function;
+
+@Service
+public class JwtService {
+
+    @Value("${jwt.secret}")
+    private String jwtSecret;
+
+    // Генерация Access токена
+    public String generateAccessToken(String email) {
+        // Access Token живёт 15 минут
+        long accessTokenValidity = 1000 * 60 * 15;
+        return createToken(email, accessTokenValidity);
+    }
+
+    // Создание JWT токена
+    private String createToken(String subject, long validity) {
+        return Jwts.builder()
+                .setSubject(subject)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + validity))
+                .signWith(SignatureAlgorithm.HS256, jwtSecret)
+                .compact();
+    }
+
+    // Проверка валидности токена
+    public boolean isTokenValid(String token) {
+        try {
+            return !isTokenExpired(token);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // Проверка на истечение срока действия токена
+    private boolean isTokenExpired(String token) {
+        return extractExpiration(token).before(new Date());
+    }
+
+    // Извлечение срока действия токена
+    public Date extractExpiration(String token) {
+        return extractClaim(token, Claims::getExpiration);
+    }
+
+    // Извлечение Email (subject) из токена
+    public String extractEmail(String token) {
+        return extractClaim(token, Claims::getSubject);
+    }
+
+    // Универсальный метод извлечения данных из токена
+    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        final Claims claims = extractAllClaims(token);
+        return claimsResolver.apply(claims);
+    }
+
+    // Извлечение всех данных из токена
+    private Claims extractAllClaims(String token) {
+        return Jwts.parser()
+                .setSigningKey(jwtSecret)
+                .parseClaimsJws(token)
+                .getBody();
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/service/RefreshTokenService.java
+Contents:
+package ru.vsu.cs.platon.docs.service;
+
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import ru.vsu.cs.platon.docs.model.RefreshToken;
+import ru.vsu.cs.platon.docs.model.User;
+import ru.vsu.cs.platon.docs.repository.RefreshTokenRepository;
+
+import java.time.LocalDateTime;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class RefreshTokenService {
+
+    private final RefreshTokenRepository refreshTokenRepository;
+
+    private final long refreshTokenDurationDays = 7;  // Жизнь токена - 7 дней
+
+    // Генерация токена
+    public RefreshToken createRefreshToken(User user, HttpServletRequest request) {
+        String ipAddress = request.getRemoteAddr();
+        String userAgent = request.getHeader("User-Agent");
+
+        RefreshToken refreshToken = RefreshToken.builder()
+                .user(user)
+                .token(UUID.randomUUID().toString())
+                .expiryDate(LocalDateTime.now().plusDays(refreshTokenDurationDays))
+                .ipAddress(ipAddress)
+                .userAgent(userAgent)
+                .build();
+
+        return refreshTokenRepository.save(refreshToken);
+    }
+
+    // Поиск токена по его значению
+    public Optional<RefreshToken> findByToken(String token) {
+        return refreshTokenRepository.findByToken(token);
+    }
+
+    // Проверка токена на валидность
+    public boolean isTokenExpired(RefreshToken token) {
+        return token.getExpiryDate().isBefore(LocalDateTime.now());
+    }
+
+    // Удаление токена по объекту токена
+    public void deleteToken(RefreshToken token) {
+        refreshTokenRepository.delete(token);
+    }
+
+    // Удаление всех токенов пользователя (например, при выходе)
+    public void deleteTokensForUser(User user) {
+        refreshTokenRepository.deleteByUserId(user.getId());
+    }
+
+    // Обновление токена: удаление старого и создание нового
+    public RefreshToken refreshToken(RefreshToken oldToken, HttpServletRequest request) {
+        deleteToken(oldToken);
+        return createRefreshToken(oldToken.getUser(), request);
+    }
+}
+
+--------------------------------------------------
