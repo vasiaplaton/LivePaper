@@ -1,9 +1,8 @@
 package ru.vsu.cs.platon.docs.mapper;
 
-import ru.vsu.cs.platon.docs.dto.UserDTO;
 import ru.vsu.cs.platon.docs.dto.DocumentDTO;
+import ru.vsu.cs.platon.docs.dto.UserDTO;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.model.Document;
 
 import java.util.List;
 import java.util.stream.Collectors;

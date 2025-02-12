@@ -1,10 +1,12 @@
 package ru.vsu.cs.platon.docs.model;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Entity
 @Table(name = "document_permissions", uniqueConstraints = @UniqueConstraint(columnNames = {"document_id", "user_id"}))

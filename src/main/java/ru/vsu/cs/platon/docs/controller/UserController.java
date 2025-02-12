@@ -4,8 +4,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -29,14 +27,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Slf4j
 public class UserController {
-    Logger logger = LoggerFactory.getLogger(UserController.class);
-
     private final UserRepository userRepository;
 
     @GetMapping("/me")
     @Operation(summary = "Получить информацию о текущем пользователе", description = "Возвращает данные текущего авторизованного пользователя")
     public ResponseEntity<UserDTO> getCurrentUser(@AuthenticationPrincipal UserDetails userDetails) {
-        logger.info(userDetails.getUsername());
         Optional<User> userOptional = userRepository.findByEmail(userDetails.getUsername());
 
         return userOptional

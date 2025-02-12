@@ -3,12 +3,15 @@ package ru.vsu.cs.platon.docs.service;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.function.Function;
-
+import io.jsonwebtoken.io.Decoders;
 @Service
 public class JwtService {
 
@@ -24,11 +27,12 @@ public class JwtService {
 
     // Создание JWT токена
     private String createToken(String subject, long validity) {
+        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
         return Jwts.builder()
                 .setSubject(subject)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + validity))
-                .signWith(SignatureAlgorithm.HS256, jwtSecret)
+                .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
     }
 
@@ -64,8 +68,10 @@ public class JwtService {
 
     // Извлечение всех данных из токена
     private Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .setSigningKey(jwtSecret)
+        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes());
+        return Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
                 .parseClaimsJws(token)
                 .getBody();
     }

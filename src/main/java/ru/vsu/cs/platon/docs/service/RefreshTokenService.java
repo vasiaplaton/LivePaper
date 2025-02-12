@@ -17,6 +17,7 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
 
+    @SuppressWarnings("FieldCanBeLocal")
     private final long refreshTokenDurationDays = 7;  // Жизнь токена - 7 дней
 
     // Генерация токена

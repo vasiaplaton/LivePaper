@@ -12,7 +12,6 @@ import ru.vsu.cs.platon.docs.dto.*;
 import ru.vsu.cs.platon.docs.mapper.DocumentMapper;
 import ru.vsu.cs.platon.docs.mapper.DocumentPermissionMapper;
 import ru.vsu.cs.platon.docs.model.Document;
-import ru.vsu.cs.platon.docs.model.DocumentRole;
 import ru.vsu.cs.platon.docs.model.User;
 import ru.vsu.cs.platon.docs.repository.UserRepository;
 import ru.vsu.cs.platon.docs.service.DocumentPermissionService;
