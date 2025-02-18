@@ -24,10 +24,18 @@ class DocsApplicationTests {
 Path: ./main/resources/application.properties
 Contents:
 spring.application.name=Docs
+
 spring.datasource.url=${DATABASE_URL:jdbc:postgresql://localhost:5478/db}
 spring.datasource.username=${POSTGRES_USER:admin}
 spring.datasource.password=${POSTGRES_PASSWORD:1q2w3e4r}
 spring.datasource.driver-class-name=org.postgresql.Driver
+
+# ClickHouse settings
+spring.secondDatasource.url=jdbc:ch://localhost:8123/docs
+spring.secondDatasource.username=default
+spring.secondDatasource.password=default
+spring.secondDatasource.driver-class-name=ru.yandex.clickhouse.ClickHouseDriver
+
 
 # JPA settings
 spring.jpa.hibernate.ddl-auto=update
@@ -36,6 +44,8 @@ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 # logging.level.org.springframework.security.web.access=DEBUG
 spring.flyway.enabled=true
 spring.flyway.locations=classpath:db/migration
+
+
 
 springdoc.api-docs.path=/openapi.json
 springdoc.swagger-ui.path=/docs
@@ -402,6 +412,46 @@ public interface UserRepository extends JpaRepository<User, Long> {
 }
 
 --------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/clickhouse/DocumentSnapshotRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository;
+
+import org.springframework.data.jdbc.repository.query.Query;
+import org.springframework.data.repository.CrudRepository;
+import org.springframework.stereotype.Repository;
+import ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot;
+
+import java.util.Optional;
+import java.util.UUID;
+
+@Repository
+public interface DocumentSnapshotRepository extends CrudRepository<DocumentSnapshot, UUID> {
+
+    @Query("SELECT * FROM document_snapshots WHERE document_id = :documentId ORDER BY created_at DESC LIMIT 1")
+    Optional<DocumentSnapshot> findLatestSnapshotByDocumentId(UUID documentId);
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/clickhouse/DocumentDiffRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository;
+
+import org.springframework.data.jdbc.repository.query.Query;
+import org.springframework.data.repository.CrudRepository;
+import org.springframework.stereotype.Repository;
+import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
+
+import java.util.List;
+import java.util.UUID;
+
+@Repository
+public interface DocumentDiffRepository extends CrudRepository<DocumentDiff, UUID> {
+
+    @Query("SELECT * FROM document_diffs WHERE document_id = :documentId ORDER BY created_at ASC")
+    List<DocumentDiff> findByDocumentId(UUID documentId);
+}
+
+--------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/config/SecurityConfig.java
 Contents:
 package ru.vsu.cs.platon.docs.config;
@@ -580,6 +630,39 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         filterChain.doFilter(request, response);
     }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/config/DatasourceConfig.java
+Contents:
+package ru.vsu.cs.platon.docs.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+
+import javax.sql.DataSource;
+
+@Configuration
+public class DatasourceConfig {
+
+    @Bean
+    public JdbcTemplate clickHouseJdbcTemplate(DataSource clickHouseDataSource) {
+        return new JdbcTemplate(clickHouseDataSource);
+    }
+
+    @Bean
+    @Primary
+    @ConfigurationProperties(prefix="spring.datasource")
+    public DataSource primaryDataSource() {
+        return DataSourceBuilder.create().build();
+    }
+
 }
 
 --------------------------------------------------
@@ -952,6 +1035,34 @@ public class AuthController {
         String newAccessToken = jwtService.generateAccessToken(refreshToken.getUser().getEmail());
 
         return ResponseEntity.ok(new AuthResponseDTO(newAccessToken, newRefreshToken.getToken()));
+    }
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/controller/TestController.java
+Contents:
+package ru.vsu.cs.platon.docs.controller;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
+import ru.vsu.cs.platon.docs.service.ClickHouseService;
+
+import java.util.List;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/test")
+@RequiredArgsConstructor
+public class TestController {
+
+    private final ClickHouseService clickHouseService;
+
+    @GetMapping("/diffs/{documentId}")
+    public ResponseEntity<List<DocumentDiff>> getAllDiffs(@PathVariable UUID documentId) {
+        List<DocumentDiff> diffs = clickHouseService.getDiffs(documentId);
+        return ResponseEntity.ok(diffs);
     }
 }
 
@@ -1368,6 +1479,111 @@ public class Document {
         updatedAt = LocalDateTime.now();
     }
 }
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/clickhouse/DocumentDiff.java
+Contents:
+package ru.vsu.cs.platon.docs.model.clickhouse;
+
+import lombok.Data;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Table;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Data
+@Table("document_diffs")
+public class DocumentDiff {
+
+    @Id
+    private UUID id;
+    private UUID documentId;
+    private String diffContent;  // Содержимое изменений (например, JSON)
+    private UUID previousDiffId; // Ссылка на предыдущий diff
+    private boolean diffProcessed; // Применен ли OT
+    private LocalDateTime createdAt;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/model/clickhouse/DocumentSnapshot.java
+Contents:
+package ru.vsu.cs.platon.docs.model.clickhouse;
+
+import lombok.Data;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Table;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Data
+@Table("document_snapshots")
+public class DocumentSnapshot {
+
+    @Id
+    private UUID id;
+    private UUID documentId;
+    private String snapshotPath; // Путь к файлу со снепшотом
+    private UUID appliedDiffId; // Какой diff был последним примененным к этой версии
+    private LocalDateTime createdAt;
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/service/ClickHouseService.java
+Contents:
+package ru.vsu.cs.platon.docs.service;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
+import ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot;
+import ru.vsu.cs.platon.docs.repository.DocumentDiffRepository;
+import ru.vsu.cs.platon.docs.repository.DocumentSnapshotRepository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class ClickHouseService {
+
+    private final DocumentDiffRepository documentDiffRepository;
+    private final DocumentSnapshotRepository documentSnapshotRepository;
+
+    public void saveDiff(UUID documentId, String diffContent, UUID previousDiffId) {
+        DocumentDiff diff = new DocumentDiff();
+        diff.setId(UUID.randomUUID());
+        diff.setDocumentId(documentId);
+        diff.setDiffContent(diffContent);
+        diff.setPreviousDiffId(previousDiffId);
+        diff.setDiffProcessed(false);
+        diff.setCreatedAt(LocalDateTime.now());
+
+        documentDiffRepository.save(diff);
+    }
+
+    public List<DocumentDiff> getDiffs(UUID documentId) {
+        return documentDiffRepository.findByDocumentId(documentId);
+    }
+
+    public Optional<DocumentSnapshot> getLatestSnapshot(UUID documentId) {
+        return documentSnapshotRepository.findLatestSnapshotByDocumentId(documentId);
+    }
+
+    public void saveSnapshot(UUID documentId, String snapshotPath, UUID appliedDiffId) {
+        DocumentSnapshot snapshot = new DocumentSnapshot();
+        snapshot.setId(UUID.randomUUID());
+        snapshot.setDocumentId(documentId);
+        snapshot.setSnapshotPath(snapshotPath);
+        snapshot.setAppliedDiffId(appliedDiffId);
+        snapshot.setCreatedAt(LocalDateTime.now());
+
+        documentSnapshotRepository.save(snapshot);
+    }
+}
+
 --------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/service/JwtService.java
 Contents:

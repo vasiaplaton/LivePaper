@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
 
   db:
@@ -19,5 +21,25 @@ services:
       retries: 20
     restart: always
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    ports:
+      - "8123:8123"  # HTTP интерфейс
+      - "9000:9000"  # Native интерфейс
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    environment:
+      - CLICKHOUSE_DB=docs
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8123/ || exit 1"]
+      interval: 10s
+      retries: 5
+
 volumes:
   postgres_data:
+  clickhouse_data:
+  clickhouse_logs:
