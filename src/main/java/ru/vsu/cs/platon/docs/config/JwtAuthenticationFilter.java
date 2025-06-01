@@ -11,7 +11,7 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 import ru.vsu.cs.platon.docs.service.JwtService;
 
 import java.io.IOException;

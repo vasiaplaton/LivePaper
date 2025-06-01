@@ -1,0 +1,41 @@
+@startuml
+actor User1
+actor User2
+participant "Flutter Client 1" as Client1
+participant "Flutter Client 2" as Client2
+participant Nginx
+participant "Spring Boot API Server" as APIServer
+participant RabbitMQ
+participant OTWorker
+participant SaveWorker
+participant ClickHouse
+participant PostgreSQL
+
+== Пользователь 1 вносит изменения ==
+
+User1 -> Client1 : Ввод изменений
+Client1 -> Nginx : HTTPS PATCH /document/{id}
+Nginx -> APIServer : Проксирование запроса
+
+== Отправка события в очередь ==
+
+APIServer -> RabbitMQ : Публикация события (diff + версия у User1)
+
+== Фоновая обработка в Worker ==
+
+RabbitMQ -> Worker : Получение события (diff + версия)
+OTWorker -> ClickHouse : Получение предыдущей версии документа
+OTWorker -> OTWorker : Применение OT (diff на базовую версию)
+OTWorker -> ClickHouse : Сохранение новой версии
+
+== Обновление для второго пользователя ==
+APIServer -> ClickHouse : Получение новой версии документа
+APIServer -> Client2 : WebSocket: Diff изменений с OT
+
+== Обновление состояния в PostgreSQL ==
+
+SaveWorker -> ClickHouse: Получение послденей версии документа
+SaveWorker -> SaveWorker: Сохранение новой версии
+SaveWorker -> PostgreSQL : Обновление метаданных документа
+
+@enduml

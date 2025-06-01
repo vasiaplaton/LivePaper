@@ -2,14 +2,15 @@ package ru.vsu.cs.platon.docs.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import ru.vsu.cs.platon.docs.config.JwtAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -23,18 +24,27 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        String[] patterns = new String[]{"/auth/**", "/swagger-ui/**", "/v3/api-docs/**", "/docs/**", "/openapi.json/**"};
-        http
-                .csrf(AbstractHttpConfigurer::disable)
-                .sessionManagement(AbstractHttpConfigurer::disable)
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(patterns).permitAll()  // Разрешаем публичные эндпоинты
-                        .anyRequest().authenticated()                // Всё остальное требует авторизации
-                )
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);  // JWT фильтр перед UsernamePassword
+        // паттерны, которые должны быть публичными
+        String[] publicPatterns = new String[]{
+                "/auth/**", "/swagger-ui/**", "/v3/api-docs/**", "/docs/**", "/openapi.json/**"
+        };
 
-        // Добавляем JWT фильтр
-// Отключаем сессии для JWT
+        http
+                // 1) включаем CORS (Spring Security будет брать конфигурацию из CorsConfigurationSource или WebMvcConfigurer)
+                .cors(Customizer.withDefaults())
+                // 2) отключаем CSRF, потому что у нас stateless JWT
+                .csrf(csrf -> csrf.disable())
+                // 3) не используем встроенную сессию
+                .sessionManagement(sm -> sm.disable())
+                // 4) разрешаем OPTIONS-предварительные запросы без авторизации
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(publicPatterns).permitAll()
+                        .anyRequest().authenticated()
+                )
+                // 5) добавляем фильтр JWT перед UsernamePasswordAuthenticationFilter
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
 

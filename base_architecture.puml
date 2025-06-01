@@ -1,0 +1,60 @@
+@startuml
+!define RECTANGLE class
+skinparam rectangle {
+    BackgroundColor #F8F8F8
+    BorderColor Black
+    BorderThickness 1
+}
+
+left to right direction
+
+actor User1 as u1
+actor User2 as u2
+rectangle "Flutter Client (Web)1" as Client1
+rectangle "Flutter Client (Web)2" as Client2
+
+u1 ---> Client1
+u2 ---> Client2
+
+Client1 <-> Client2: WebRTC
+
+
+rectangle "Backend" {
+    rectangle "Nginx (SSL Termination)" as nginx
+    Client1 ---> nginx: HTTPS \n /auth /document (create)
+    Client2 ---> nginx: HTTPS \n /auth /document (create)
+
+    rectangle "Spring Boot API Server" as APIServer {
+            rectangle "HTTP API Handler"
+            rectangle "WebSocket Handler"
+            rectangle "WebRTC Manager"
+    }
+    nginx -> APIServer: proxy_pass
+
+
+
+    Client1 <---> APIServer: WebSocket
+    Client2 <---> APIServer: WebSocket
+
+
+    rectangle "RabbitMQ" as rbq
+
+    rectangle "Worker" as w1 {
+        [Operational Transformation (OT) Engine]
+    }
+
+    rbq -> w1: docs changes
+
+    APIServer --> rbq: docs changes
+
+    rectangle "Database" {
+        rectangle "PostgreSQL" as psql
+        rectangle "Clickhouse" as cshl
+    }
+
+    w1 -> cshl: docs versions
+    APIServer ---> psql
+    APIServer ---> cshl
+
+}
+@enduml

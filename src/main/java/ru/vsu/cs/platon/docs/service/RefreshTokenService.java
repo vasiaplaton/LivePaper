@@ -5,7 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import ru.vsu.cs.platon.docs.model.RefreshToken;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.RefreshTokenRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.RefreshTokenRepository;
 
 import java.time.LocalDateTime;
 import java.util.Optional;

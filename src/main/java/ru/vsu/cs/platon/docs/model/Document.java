@@ -19,14 +19,15 @@ public class Document {
 
     @Id
     @GeneratedValue(generator = "UUID")
-    @UuidGenerator()
+    @UuidGenerator
     @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
 
-    @Column(nullable = false)
+    @Column(name = "title", nullable = false)
     private String title;
 
-    @Column(nullable = false)
+    // ← Now maps to file_path exactly
+    @Column(name = "file_path", nullable = false)
     private String filePath;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -34,15 +35,18 @@ public class Document {
     @JsonBackReference
     private User owner;
 
+    // ← Now maps to access_level exactly
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
     @Builder.Default
+    @Column(name = "access_level", nullable = false)
     private DocumentAccessLevel accessLevel = DocumentAccessLevel.PRIVATE;
 
-    @Column(nullable = false, updatable = false)
+    // ← Now maps to created_at exactly
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(nullable = false)
+    // ← Now maps to updated_at exactly
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     @OneToMany(mappedBy = "document", cascade = CascadeType.ALL, orphanRemoval = true)

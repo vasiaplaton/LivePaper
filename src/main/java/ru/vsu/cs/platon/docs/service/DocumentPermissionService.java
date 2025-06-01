@@ -8,8 +8,8 @@ import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentPermission;
 import ru.vsu.cs.platon.docs.model.DocumentRole;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.DocumentPermissionRepository;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.DocumentPermissionRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 
 import java.util.List;
 import java.util.Optional;

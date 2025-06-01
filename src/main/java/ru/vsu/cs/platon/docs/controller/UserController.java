@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import ru.vsu.cs.platon.docs.dto.UserDTO;
 import ru.vsu.cs.platon.docs.mapper.UserMapper;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 
 import java.util.List;
 import java.util.Optional;

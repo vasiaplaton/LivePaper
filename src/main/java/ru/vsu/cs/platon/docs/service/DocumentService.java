@@ -2,18 +2,14 @@ package ru.vsu.cs.platon.docs.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
-import ru.vsu.cs.platon.docs.controller.DocumentController;
 import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
-import ru.vsu.cs.platon.docs.model.DocumentPermission;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.DocumentRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.DocumentRepository;
 import ru.vsu.cs.platon.docs.service.file.FileService;
-import java.util.List;
+
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,11 +29,12 @@ public class DocumentService {
     public Document createDocument(User owner, String title) {
         byte[] emptyFileContent = "".getBytes();  // Пустой файл для начала
         String filePath = fileService.saveFile(emptyFileContent);
-
+        System.out.println("filePath: " + filePath);
         Document document = Document.builder()
                 .title(title)
                 .owner(owner)
                 .filePath(filePath)
+                .accessLevel(DocumentAccessLevel.PRIVATE)
                 .build();
         return documentRepository.save(document);
     }

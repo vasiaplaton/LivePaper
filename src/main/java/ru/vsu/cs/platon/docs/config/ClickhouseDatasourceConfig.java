@@ -1,39 +1,47 @@
 package ru.vsu.cs.platon.docs.config;
 
+import javax.sql.DataSource;
+
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
-import javax.sql.DataSource;
 
-@Configuration
 public class ClickhouseDatasourceConfig {
 
-    @Value("${spring.secondDatasource.url}")
+    // Эти значения будут браться из переменных окружения
+    @Value("${CLICKHOUSE_URL}")
     private String url;
 
-    @Value("${spring.secondDatasource.username}")
+    @Value("${CLICKHOUSE_USERNAME}")
     private String username;
 
-    @Value("${spring.secondDatasource.password}")
+    @Value("${CLICKHOUSE_PASSWORD:}")  // пустая строка по умолчанию
     private String password;
 
-    @Bean
-    @ConfigurationProperties(prefix="spring.secondDatasource")
+    /** Основной DataSource для ClickHouse */
+
     public DataSource clickHouseDataSource() {
-        DriverManagerDataSource dataSource = new DriverManagerDataSource();
-        dataSource.setDriverClassName("ru.yandex.clickhouse.ClickHouseDriver");
-        dataSource.setUrl(url);
-        dataSource.setUsername(username);
-        dataSource.setPassword(password);
-        return dataSource;
+        DriverManagerDataSource ds = new DriverManagerDataSource();
+        ds.setDriverClassName("com.clickhouse.jdbc.ClickHouseDriver");
+        ds.setUrl(url);
+        ds.setUsername(username);
+        ds.setPassword(password);
+        return ds;
     }
 
-    @Bean
+    /** JdbcTemplate для простых запросов (плейсхолдеры '?') */
+
     public JdbcTemplate clickHouseJdbcTemplate(DataSource clickHouseDataSource) {
         return new JdbcTemplate(clickHouseDataSource);
+    }
+
+    /** NamedParameterJdbcTemplate для Spring Data JDBC (':param') */
+
+    public NamedParameterJdbcTemplate clickHouseNamedParamTemplate(DataSource clickHouseDataSource) {
+        return new NamedParameterJdbcTemplate(clickHouseDataSource);
     }
 }

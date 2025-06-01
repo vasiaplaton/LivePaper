@@ -1,0 +1,97 @@
+@startuml
+'left to right direction
+
+package Postgresql {
+entity User {
+  * id : Long
+  * email : String
+  * passwordHash : String
+  * username : String
+  * createdAt : LocalDateTime
+  * updatedAt : LocalDateTime
+  * role : UserRole
+}
+
+entity RefreshToken {
+  * id : Long
+  * userId : Long
+  * token : String
+  * expiryDate : LocalDateTime
+  * ipAddress : String
+  * userAgent : String
+  * createdAt : LocalDateTime
+  * updatedAt : LocalDateTime
+}
+
+entity Folder {
+  * id : Long
+  * userId : Long
+  * name : String
+  * parentId : Long [nullable]
+  * createdAt : LocalDateTime
+  * updatedAt : LocalDateTime
+}
+
+entity Document {
+  * id : UUID
+  * ownerId : Long
+  * folderId : Long [nullable]
+  * title : String
+  * filePath : String
+  * accessLevel : DocumentAccessLevel
+  * createdAt : LocalDateTime
+  * updatedAt : LocalDateTime
+}
+
+entity DocumentPermission {
+  * id : Long
+  * documentId : UUID
+  * userId : Long
+  * role : DocumentRole
+  * createdAt : LocalDateTime
+  * updatedAt : LocalDateTime
+}
+
+entity DocumentFile {
+  * id : Long
+  * documentId : UUID
+  * filePath : String
+  * uploadedAt : LocalDateTime
+}
+
+' Связи
+User ||--o{ RefreshToken : has
+User ||--o{ Folder : owns_folder
+User ||--o{ Document : owns_document
+User ||--o{ DocumentPermission : permission_to_doc
+
+Folder ||--o{ Folder : subfolders
+Folder ||--o{ Document : contains_doc
+
+Document ||--o{ DocumentPermission : has_permissions
+Document ||--o{ DocumentFile : has_files
+}
+
+package Clickhouse {
+entity DocumentSnapshot {
+  * id : UUID
+  * documentId : UUID
+  * snapshotPath : String
+  * appliedDiffId : UUID
+  * createdAt : LocalDateTime
+}
+
+entity DocumentDiff {
+  * id : UUID
+  * documentId : UUID
+  * diffContent : String
+  * previousDiffId : UUID
+  * diffProcessed : boolean
+  * createdAt : LocalDateTime
+}
+
+DocumentSnapshot }|..|| Document_1 : based_on
+DocumentDiff }|..|| Document_1 : changes
+}
+@enduml
+

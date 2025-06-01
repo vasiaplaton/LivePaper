@@ -1,20 +1,37 @@
 package ru.vsu.cs.platon.docs.model.clickhouse;
 
+import jakarta.persistence.*;
 import lombok.Data;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.relational.core.mapping.Table;
+import org.hibernate.annotations.UuidGenerator;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Entity
+@Table(name = "document_snapshots")
 @Data
-@Table("document_snapshots")
 public class DocumentSnapshot {
 
     @Id
+    @GeneratedValue(generator = "UUID")
+    @UuidGenerator
+    @Column(name = "id", updatable = false, nullable = false, columnDefinition = "UUID")
     private UUID id;
+
+    @Column(name = "document_id", nullable = false, columnDefinition = "UUID")
     private UUID documentId;
-    private String snapshotPath; // Путь к файлу со снепшотом
-    private UUID appliedDiffId; // Какой diff был последним примененным к этой версии
+
+    @Column(name = "snapshot_path", nullable = false, columnDefinition = "TEXT")
+    private String snapshotPath;
+
+    @Column(name = "applied_diff_id", columnDefinition = "UUID")
+    private UUID appliedDiffId;
+
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
 }

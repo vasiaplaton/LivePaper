@@ -1,16 +1,20 @@
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.clickhouse;
 
-import org.springframework.data.jdbc.repository.query.Query;
-import org.springframework.data.repository.CrudRepository;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot;
 
 import java.util.Optional;
 import java.util.UUID;
 
-@Repository
-public interface DocumentSnapshotRepository extends CrudRepository<DocumentSnapshot, UUID> {
+public interface DocumentSnapshotRepository extends JpaRepository<DocumentSnapshot, UUID> {
 
-    @Query("SELECT * FROM document_snapshots WHERE document_id = :documentId ORDER BY created_at DESC LIMIT 1")
-    Optional<DocumentSnapshot> findLatestSnapshotByDocumentId(UUID documentId);
+    /**
+     * Finds the latest snapshot for a given document.
+     */
+    @Query("SELECT ds FROM ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot ds " +
+            "WHERE ds.documentId = :documentId " +
+            "ORDER BY ds.createdAt DESC")
+    Optional<DocumentSnapshot> findLatestByDocumentId(@Param("documentId") UUID documentId);
 }

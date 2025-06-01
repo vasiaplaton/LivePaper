@@ -1,13 +1,16 @@
 package ru.vsu.cs.platon.docs.service;
 
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
 import ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot;
-import ru.vsu.cs.platon.docs.repository.DocumentDiffRepository;
-import ru.vsu.cs.platon.docs.repository.DocumentSnapshotRepository;
+import ru.vsu.cs.platon.docs.repository.clickhouse.DocumentDiffRepository;
+import ru.vsu.cs.platon.docs.repository.clickhouse.DocumentSnapshotRepository;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +22,9 @@ public class ClickHouseService {
     private final DocumentDiffRepository documentDiffRepository;
     private final DocumentSnapshotRepository documentSnapshotRepository;
 
+    /**
+     * Сохранить новый diff.
+     */
     public void saveDiff(UUID documentId, String diffContent, UUID previousDiffId) {
         DocumentDiff diff = new DocumentDiff();
         diff.setId(UUID.randomUUID());
@@ -28,17 +34,28 @@ public class ClickHouseService {
         diff.setDiffProcessed(false);
         diff.setCreatedAt(LocalDateTime.now());
 
-        documentDiffRepository.save(diff);
+        // здесь можно вызвать insertDiff, когда он раскомментирован:
+        // documentDiffRepository.insertDiff(diff);
     }
 
+    /**
+     * Получить все diffs документа (пока заглушка).
+     */
     public List<DocumentDiff> getDiffs(UUID documentId) {
-        return documentDiffRepository.findByDocumentId(documentId);
+        // Если появится метод repository.findByDocumentId(...), можно заменить:
+        return documentDiffRepository.findAllByDocumentIdOrderByCreatedAtDesc(documentId);
     }
 
+    /**
+     * Последний снапшот по документу.
+     */
     public Optional<DocumentSnapshot> getLatestSnapshot(UUID documentId) {
-        return documentSnapshotRepository.findLatestSnapshotByDocumentId(documentId);
+        return documentSnapshotRepository.findLatestByDocumentId(documentId);
     }
 
+    /**
+     * Сохранить новый снапшот.
+     */
     public void saveSnapshot(UUID documentId, String snapshotPath, UUID appliedDiffId) {
         DocumentSnapshot snapshot = new DocumentSnapshot();
         snapshot.setId(UUID.randomUUID());
@@ -47,6 +64,7 @@ public class ClickHouseService {
         snapshot.setAppliedDiffId(appliedDiffId);
         snapshot.setCreatedAt(LocalDateTime.now());
 
-        documentSnapshotRepository.save(snapshot);
+        // TODO
+        // documentSnapshotRepository.save(snapshot);
     }
 }

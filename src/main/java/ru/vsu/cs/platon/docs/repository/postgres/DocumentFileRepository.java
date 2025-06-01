@@ -1,4 +1,4 @@
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.postgres;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import ru.vsu.cs.platon.docs.model.Document;

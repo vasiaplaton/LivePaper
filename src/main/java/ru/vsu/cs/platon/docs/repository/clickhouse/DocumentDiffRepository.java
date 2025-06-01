@@ -1,16 +1,15 @@
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.clickhouse;
 
-import org.springframework.data.jdbc.repository.query.Query;
-import org.springframework.data.repository.CrudRepository;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.JpaRepository;
 import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
 
 import java.util.List;
 import java.util.UUID;
 
-@Repository
-public interface DocumentDiffRepository extends CrudRepository<DocumentDiff, UUID> {
+public interface DocumentDiffRepository extends JpaRepository<DocumentDiff, UUID> {
 
-    @Query("SELECT * FROM document_diffs WHERE document_id = :documentId ORDER BY created_at ASC")
-    List<DocumentDiff> findByDocumentId(UUID documentId);
+    /**
+     * Find all diffs for a given document, ordered by creation time descending.
+     */
+    List<DocumentDiff> findAllByDocumentIdOrderByCreatedAtDesc(UUID documentId);
 }

@@ -1,6 +1,4 @@
-Path: ./chatgpt
-Contents:
-Path: ./chatgpt
+Path: ./chat
 Contents:
 
 --------------------------------------------------
@@ -34,7 +32,7 @@ spring.datasource.driver-class-name=org.postgresql.Driver
 spring.secondDatasource.url=jdbc:ch://localhost:8123/docs
 spring.secondDatasource.username=default
 spring.secondDatasource.password=default
-spring.secondDatasource.driver-class-name=ru.yandex.clickhouse.ClickHouseDriver
+spring.secondDatasource.driver-class-name=com.clickhouse.jdbc.ClickHouseDriver
 
 
 # JPA settings
@@ -105,6 +103,45 @@ CREATE TABLE users (
     role VARCHAR(50),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+--------------------------------------------------
+Path: ./main/resources/db/migration/V4__create_document_diffs_and_snapshots.sql
+Contents:
+-- V4__create_document_diffs_and_snapshots.sql
+
+-- Ensure the uuid-ossp extension is enabled for UUID support
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Table to store per-document diffs
+CREATE TABLE document_diffs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL,
+    diff_content TEXT NOT NULL,
+    previous_diff_id UUID NULL,
+    diff_processed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_document_diffs_document
+      FOREIGN KEY (document_id)
+      REFERENCES documents(id) ON DELETE CASCADE,
+    CONSTRAINT fk_document_diffs_previous_diff
+      FOREIGN KEY (previous_diff_id)
+      REFERENCES document_diffs(id) ON DELETE SET NULL
+);
+
+-- Table to store document snapshots
+CREATE TABLE document_snapshots (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL,
+    snapshot_path TEXT NOT NULL,
+    applied_diff_id UUID NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_snapshots_document
+      FOREIGN KEY (document_id)
+      REFERENCES documents(id) ON DELETE CASCADE,
+    CONSTRAINT fk_snapshots_applied_diff
+      FOREIGN KEY (applied_diff_id)
+      REFERENCES document_diffs(id) ON DELETE SET NULL
 );
 
 --------------------------------------------------
@@ -304,9 +341,52 @@ public class RefreshRequestDTO {
 }
 
 --------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/repository/DocumentRepository.java
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/clickhouse/DocumentSnapshotRepository.java
 Contents:
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.clickhouse;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot;
+
+import java.util.Optional;
+import java.util.UUID;
+
+public interface DocumentSnapshotRepository extends JpaRepository<DocumentSnapshot, UUID> {
+
+    /**
+     * Finds the latest snapshot for a given document.
+     */
+    @Query("SELECT ds FROM ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot ds " +
+            "WHERE ds.documentId = :documentId " +
+            "ORDER BY ds.createdAt DESC")
+    Optional<DocumentSnapshot> findLatestByDocumentId(@Param("documentId") UUID documentId);
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/clickhouse/DocumentDiffRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository.clickhouse;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
+
+import java.util.List;
+import java.util.UUID;
+
+public interface DocumentDiffRepository extends JpaRepository<DocumentDiff, UUID> {
+
+    /**
+     * Find all diffs for a given document, ordered by creation time descending.
+     */
+    List<DocumentDiff> findAllByDocumentIdOrderByCreatedAtDesc(UUID documentId);
+}
+
+--------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/postgres/DocumentRepository.java
+Contents:
+package ru.vsu.cs.platon.docs.repository.postgres;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -340,9 +420,9 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
 }
 
 --------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/repository/RefreshTokenRepository.java
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/postgres/RefreshTokenRepository.java
 Contents:
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.postgres;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import ru.vsu.cs.platon.docs.model.RefreshToken;
@@ -355,9 +435,9 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
 }
 
 --------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/repository/DocumentPermissionRepository.java
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/postgres/DocumentPermissionRepository.java
 Contents:
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.postgres;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import ru.vsu.cs.platon.docs.model.Document;
@@ -380,9 +460,9 @@ public interface DocumentPermissionRepository extends JpaRepository<DocumentPerm
 }
 
 --------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/repository/DocumentFileRepository.java
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/postgres/DocumentFileRepository.java
 Contents:
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.postgres;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import ru.vsu.cs.platon.docs.model.Document;
@@ -397,9 +477,9 @@ public interface DocumentFileRepository extends JpaRepository<DocumentFile, Long
 }
 
 --------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/repository/UserRepository.java
+Path: ./main/java/ru/vsu/cs/platon/docs/repository/postgres/UserRepository.java
 Contents:
-package ru.vsu.cs.platon.docs.repository;
+package ru.vsu.cs.platon.docs.repository.postgres;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import ru.vsu.cs.platon.docs.model.User;
@@ -409,46 +489,6 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
     Optional<User> findByUsername(String username);
-}
-
---------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/repository/clickhouse/DocumentSnapshotRepository.java
-Contents:
-package ru.vsu.cs.platon.docs.repository;
-
-import org.springframework.data.jdbc.repository.query.Query;
-import org.springframework.data.repository.CrudRepository;
-import org.springframework.stereotype.Repository;
-import ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot;
-
-import java.util.Optional;
-import java.util.UUID;
-
-@Repository
-public interface DocumentSnapshotRepository extends CrudRepository<DocumentSnapshot, UUID> {
-
-    @Query("SELECT * FROM document_snapshots WHERE document_id = :documentId ORDER BY created_at DESC LIMIT 1")
-    Optional<DocumentSnapshot> findLatestSnapshotByDocumentId(UUID documentId);
-}
-
---------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/repository/clickhouse/DocumentDiffRepository.java
-Contents:
-package ru.vsu.cs.platon.docs.repository;
-
-import org.springframework.data.jdbc.repository.query.Query;
-import org.springframework.data.repository.CrudRepository;
-import org.springframework.stereotype.Repository;
-import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
-
-import java.util.List;
-import java.util.UUID;
-
-@Repository
-public interface DocumentDiffRepository extends CrudRepository<DocumentDiff, UUID> {
-
-    @Query("SELECT * FROM document_diffs WHERE document_id = :documentId ORDER BY created_at ASC")
-    List<DocumentDiff> findByDocumentId(UUID documentId);
 }
 
 --------------------------------------------------
@@ -536,6 +576,57 @@ public class OpenApiConfig {
 }
 
 --------------------------------------------------
+Path: ./main/java/ru/vsu/cs/platon/docs/config/ClickhouseDatasourceConfig.java
+Contents:
+package ru.vsu.cs.platon.docs.config;
+
+import javax.sql.DataSource;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+
+
+public class ClickhouseDatasourceConfig {
+
+    // Эти значения будут браться из переменных окружения
+    @Value("${CLICKHOUSE_URL}")
+    private String url;
+
+    @Value("${CLICKHOUSE_USERNAME}")
+    private String username;
+
+    @Value("${CLICKHOUSE_PASSWORD:}")  // пустая строка по умолчанию
+    private String password;
+
+    /** Основной DataSource для ClickHouse */
+
+    public DataSource clickHouseDataSource() {
+        DriverManagerDataSource ds = new DriverManagerDataSource();
+        ds.setDriverClassName("com.clickhouse.jdbc.ClickHouseDriver");
+        ds.setUrl(url);
+        ds.setUsername(username);
+        ds.setPassword(password);
+        return ds;
+    }
+
+    /** JdbcTemplate для простых запросов (плейсхолдеры '?') */
+
+    public JdbcTemplate clickHouseJdbcTemplate(DataSource clickHouseDataSource) {
+        return new JdbcTemplate(clickHouseDataSource);
+    }
+
+    /** NamedParameterJdbcTemplate для Spring Data JDBC (':param') */
+
+    public NamedParameterJdbcTemplate clickHouseNamedParamTemplate(DataSource clickHouseDataSource) {
+        return new NamedParameterJdbcTemplate(clickHouseDataSource);
+    }
+}
+
+--------------------------------------------------
 Path: ./main/java/ru/vsu/cs/platon/docs/config/GlobalExceptionHandler.java
 Contents:
 package ru.vsu.cs.platon.docs.config;
@@ -580,7 +671,7 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 import ru.vsu.cs.platon.docs.service.JwtService;
 
 import java.io.IOException;
@@ -633,36 +724,94 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 }
 
 --------------------------------------------------
-Path: ./main/java/ru/vsu/cs/platon/docs/config/DatasourceConfig.java
+Path: ./main/java/ru/vsu/cs/platon/docs/config/MainDatasourceConfig.java
 Contents:
 package ru.vsu.cs.platon.docs.config;
 
+import jakarta.persistence.EntityManagerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
 
 import javax.sql.DataSource;
+import java.util.Properties;
 
 @Configuration
-public class DatasourceConfig {
+@EnableJpaRepositories(
+        basePackages = "ru.vsu.cs.platon.docs.repository.postgres",
+        entityManagerFactoryRef = "postgresEntityManager",
+        transactionManagerRef = "postgresTransactionManager"
+)
+public class MainDatasourceConfig {
 
-    @Bean
-    public JdbcTemplate clickHouseJdbcTemplate(DataSource clickHouseDataSource) {
-        return new JdbcTemplate(clickHouseDataSource);
-    }
+    @Value("${spring.datasource.url}")
+    private String databaseUrl;
+
+    @Value("${spring.datasource.username}")
+    private String databaseUsername;
+
+    @Value("${spring.datasource.password}")
+    private String databasePassword;
+
+    @Value("${spring.datasource.driver-class-name}")
+    private String driverClassName;
 
     @Bean
     @Primary
-    @ConfigurationProperties(prefix="spring.datasource")
+    @ConfigurationProperties(prefix = "spring.datasource")
     public DataSource primaryDataSource() {
-        return DataSourceBuilder.create().build();
+        return DataSourceBuilder.create()
+                .url(databaseUrl)
+                .username(databaseUsername)
+                .password(databasePassword)
+                .driverClassName(driverClassName)
+                .build();
     }
 
+    @Primary
+    @Bean(name = "postgresEntityManager")
+    public LocalContainerEntityManagerFactoryBean entityManagerFactory(DataSource primaryDataSource) {
+        LocalContainerEntityManagerFactoryBean em = new LocalContainerEntityManagerFactoryBean();
+        em.setDataSource(primaryDataSource);
+
+        /*
+         * Add BOTH your main JPA model package and the "clickhouse" package here.
+         * This ensures that Spring will pick up @Entity in ru.vsu.cs.platon.docs.model.clickhouse.
+         */
+        em.setPackagesToScan(
+                "ru.vsu.cs.platon.docs.model",
+                "ru.vsu.cs.platon.docs.model.clickhouse"
+        );
+
+        HibernateJpaVendorAdapter vendorAdapter = new HibernateJpaVendorAdapter();
+        em.setJpaVendorAdapter(vendorAdapter);
+
+        Properties properties = new Properties();
+        properties.setProperty("hibernate.hbm2ddl.auto", "none");
+        properties.setProperty("hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect");
+        em.setJpaProperties(properties);
+
+        return em;
+    }
+
+    @Primary
+    @Bean(name = "postgresTransactionManager")
+    public JpaTransactionManager transactionManager(EntityManagerFactory postgresEntityManager) {
+        return new JpaTransactionManager(postgresEntityManager);
+    }
+
+    @Bean
+    public JdbcTemplate jdbcTemplate(DataSource primaryDataSource) {
+        return new JdbcTemplate(primaryDataSource);
+    }
 }
 
 --------------------------------------------------
@@ -767,8 +916,8 @@ import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
 import ru.vsu.cs.platon.docs.model.DocumentPermission;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.DocumentRepository;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.DocumentRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 import ru.vsu.cs.platon.docs.service.DocumentPermissionService;
 import ru.vsu.cs.platon.docs.service.DocumentService;
 import org.springframework.data.domain.Pageable;
@@ -964,7 +1113,7 @@ import ru.vsu.cs.platon.docs.dto.auth.AuthResponseDTO;
 import ru.vsu.cs.platon.docs.model.User;
 import ru.vsu.cs.platon.docs.model.RefreshToken;
 import ru.vsu.cs.platon.docs.model.UserRole;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 import ru.vsu.cs.platon.docs.service.JwtService;
 import ru.vsu.cs.platon.docs.service.RefreshTokenService;
 
@@ -1086,7 +1235,7 @@ import org.springframework.web.bind.annotation.RestController;
 import ru.vsu.cs.platon.docs.dto.UserDTO;
 import ru.vsu.cs.platon.docs.mapper.UserMapper;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 
 import java.util.List;
 import java.util.Optional;
@@ -1484,24 +1633,43 @@ Path: ./main/java/ru/vsu/cs/platon/docs/model/clickhouse/DocumentDiff.java
 Contents:
 package ru.vsu.cs.platon.docs.model.clickhouse;
 
+import jakarta.persistence.*;
 import lombok.Data;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.relational.core.mapping.Table;
+import org.hibernate.annotations.UuidGenerator;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Entity
+@Table(name = "document_diffs")
 @Data
-@Table("document_diffs")
 public class DocumentDiff {
 
     @Id
+    @GeneratedValue(generator = "UUID")
+    @UuidGenerator
+    @Column(name = "id", updatable = false, nullable = false, columnDefinition = "UUID")
     private UUID id;
+
+    @Column(name = "document_id", nullable = false, columnDefinition = "UUID")
     private UUID documentId;
-    private String diffContent;  // Содержимое изменений (например, JSON)
-    private UUID previousDiffId; // Ссылка на предыдущий diff
-    private boolean diffProcessed; // Применен ли OT
+
+    @Column(name = "diff_content", nullable = false, columnDefinition = "TEXT")
+    private String diffContent;
+
+    @Column(name = "previous_diff_id", columnDefinition = "UUID")
+    private UUID previousDiffId;
+
+    @Column(name = "diff_processed", nullable = false)
+    private boolean diffProcessed = false;
+
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
 }
 
 --------------------------------------------------
@@ -1509,23 +1677,40 @@ Path: ./main/java/ru/vsu/cs/platon/docs/model/clickhouse/DocumentSnapshot.java
 Contents:
 package ru.vsu.cs.platon.docs.model.clickhouse;
 
+import jakarta.persistence.*;
 import lombok.Data;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.relational.core.mapping.Table;
+import org.hibernate.annotations.UuidGenerator;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Entity
+@Table(name = "document_snapshots")
 @Data
-@Table("document_snapshots")
 public class DocumentSnapshot {
 
     @Id
+    @GeneratedValue(generator = "UUID")
+    @UuidGenerator
+    @Column(name = "id", updatable = false, nullable = false, columnDefinition = "UUID")
     private UUID id;
+
+    @Column(name = "document_id", nullable = false, columnDefinition = "UUID")
     private UUID documentId;
-    private String snapshotPath; // Путь к файлу со снепшотом
-    private UUID appliedDiffId; // Какой diff был последним примененным к этой версии
+
+    @Column(name = "snapshot_path", nullable = false, columnDefinition = "TEXT")
+    private String snapshotPath;
+
+    @Column(name = "applied_diff_id", columnDefinition = "UUID")
+    private UUID appliedDiffId;
+
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
 }
 
 --------------------------------------------------
@@ -1533,14 +1718,17 @@ Path: ./main/java/ru/vsu/cs/platon/docs/service/ClickHouseService.java
 Contents:
 package ru.vsu.cs.platon.docs.service;
 
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import ru.vsu.cs.platon.docs.model.clickhouse.DocumentDiff;
 import ru.vsu.cs.platon.docs.model.clickhouse.DocumentSnapshot;
-import ru.vsu.cs.platon.docs.repository.DocumentDiffRepository;
-import ru.vsu.cs.platon.docs.repository.DocumentSnapshotRepository;
+import ru.vsu.cs.platon.docs.repository.clickhouse.DocumentDiffRepository;
+import ru.vsu.cs.platon.docs.repository.clickhouse.DocumentSnapshotRepository;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -1552,6 +1740,9 @@ public class ClickHouseService {
     private final DocumentDiffRepository documentDiffRepository;
     private final DocumentSnapshotRepository documentSnapshotRepository;
 
+    /**
+     * Сохранить новый diff.
+     */
     public void saveDiff(UUID documentId, String diffContent, UUID previousDiffId) {
         DocumentDiff diff = new DocumentDiff();
         diff.setId(UUID.randomUUID());
@@ -1561,17 +1752,29 @@ public class ClickHouseService {
         diff.setDiffProcessed(false);
         diff.setCreatedAt(LocalDateTime.now());
 
-        documentDiffRepository.save(diff);
+        // здесь можно вызвать insertDiff, когда он раскомментирован:
+        // documentDiffRepository.insertDiff(diff);
     }
 
+    /**
+     * Получить все diffs документа (пока заглушка).
+     */
     public List<DocumentDiff> getDiffs(UUID documentId) {
-        return documentDiffRepository.findByDocumentId(documentId);
+        // Если появится метод repository.findByDocumentId(...), можно заменить:
+        // return documentDiffRepository.findByDocumentId(documentId);
+        return new ArrayList<>();
     }
 
+    /**
+     * Последний снапшот по документу.
+     */
     public Optional<DocumentSnapshot> getLatestSnapshot(UUID documentId) {
-        return documentSnapshotRepository.findLatestSnapshotByDocumentId(documentId);
+        return documentSnapshotRepository.findLatestByDocumentId(documentId);
     }
 
+    /**
+     * Сохранить новый снапшот.
+     */
     public void saveSnapshot(UUID documentId, String snapshotPath, UUID appliedDiffId) {
         DocumentSnapshot snapshot = new DocumentSnapshot();
         snapshot.setId(UUID.randomUUID());
@@ -1580,7 +1783,8 @@ public class ClickHouseService {
         snapshot.setAppliedDiffId(appliedDiffId);
         snapshot.setCreatedAt(LocalDateTime.now());
 
-        documentSnapshotRepository.save(snapshot);
+        // TODO
+        // documentSnapshotRepository.save(snapshot);
     }
 }
 
@@ -1673,18 +1877,14 @@ package ru.vsu.cs.platon.docs.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
-import ru.vsu.cs.platon.docs.controller.DocumentController;
 import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentAccessLevel;
-import ru.vsu.cs.platon.docs.model.DocumentPermission;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.DocumentRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.DocumentRepository;
 import ru.vsu.cs.platon.docs.service.file.FileService;
-import java.util.List;
+
 import java.util.Optional;
 import java.util.UUID;
 
@@ -1746,7 +1946,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import ru.vsu.cs.platon.docs.model.RefreshToken;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.RefreshTokenRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.RefreshTokenRepository;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -1817,8 +2017,8 @@ import ru.vsu.cs.platon.docs.model.Document;
 import ru.vsu.cs.platon.docs.model.DocumentPermission;
 import ru.vsu.cs.platon.docs.model.DocumentRole;
 import ru.vsu.cs.platon.docs.model.User;
-import ru.vsu.cs.platon.docs.repository.DocumentPermissionRepository;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.DocumentPermissionRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 
 import java.util.List;
 import java.util.Optional;

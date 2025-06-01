@@ -13,7 +13,7 @@ import ru.vsu.cs.platon.docs.dto.auth.AuthResponseDTO;
 import ru.vsu.cs.platon.docs.model.User;
 import ru.vsu.cs.platon.docs.model.RefreshToken;
 import ru.vsu.cs.platon.docs.model.UserRole;
-import ru.vsu.cs.platon.docs.repository.UserRepository;
+import ru.vsu.cs.platon.docs.repository.postgres.UserRepository;
 import ru.vsu.cs.platon.docs.service.JwtService;
 import ru.vsu.cs.platon.docs.service.RefreshTokenService;
 
